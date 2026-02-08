@@ -1,0 +1,9 @@
+
+{
+  "name": "TERRAPRO ERP - Gestão de Ativos",
+  "description": "Sistema integrado de gestão para transportadoras e terraplanagem baseado na marca TERRA.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
