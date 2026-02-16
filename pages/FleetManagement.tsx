@@ -1,18 +1,169 @@
 
 import React, { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 import { Asset, AssetStatus } from '../types';
-import { Truck, Activity, ShieldCheck, MapPin, Gauge, Plus, Save, BookOpen, Search, Trash2, Download, FileText, Upload } from 'lucide-react';
+import { Truck, Activity, ShieldCheck, MapPin, Gauge, Plus, Save, BookOpen, Search, Trash2, Download, FileText, Upload, FileSpreadsheet, RefreshCw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Modal from '../components/Modal';
 import { fleetManagementService } from '../services/fleetService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as xlsx from 'xlsx';
 
 const FleetManagement: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Import Modal State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importAssetId, setImportAssetId] = useState<string>('');
+  const [importProgress, setImportProgress] = useState<number>(0);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importLog, setImportLog] = useState<string[]>([]);
+
+  const handleImportGPS = async () => {
+    if (!importFile || !importAssetId) return;
+    setIsImporting(true);
+    setImportLog([]);
+    setImportProgress(0);
+
+    try {
+      const buffer = await importFile.arrayBuffer();
+      const workbook = xlsx.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      // Ler todas as colunas
+      const rows: any[] = xlsx.utils.sheet_to_json(worksheet, { defval: '' });
+
+      setImportLog(prev => [...prev, `Linhas encontradas: ${rows.length}`]);
+
+      const BATCH_SIZE = 500;
+      let batch: any[] = [];
+      let processed = 0;
+
+      let minDate: Date | null = null;
+      let maxDate: Date | null = null;
+
+      for (const row of rows) {
+        // Mapeamento de Colunas (Flexível)
+        const latVal = row['Latitude'] || row['Lat'] || row['latitude'];
+        const lngVal = row['Longitude'] || row['Lng'] || row['longitude'] || row['Long'];
+        // Suporte a Data/Hora Evento, Data, DataHora, timestamp
+        const dateVal = row['Data/Hora Evento'] || row['Data'] || row['DataHora'] || row['data_hora'] || row['timestamp'];
+
+        const speedVal = row['Velocidade'] || row['Velocidade (km/h)'] || row['speed'] || 0;
+        const ignVal = row['Ignição'] || row['Ignition'] || row['ignicao'] || 'OFF';
+
+        // Tratamento de Lat/Lng (converter vírgula para ponto)
+        const parseCoord = (val: any) => {
+          if (typeof val === 'number') return val;
+          if (typeof val === 'string') return parseFloat(val.replace(',', '.'));
+          return 0;
+        };
+
+        const lat = parseCoord(latVal);
+        const lng = parseCoord(lngVal);
+
+        if (!lat || !lng || lat === 0 || lng === 0) continue;
+
+        // Tratamento de Data
+        let timestamp = null;
+        if (typeof dateVal === 'number') {
+          // Excel Serial Date
+          const excelEpoch = new Date(1899, 11, 30);
+          const days = Math.floor(dateVal);
+          const ms = Math.round((dateVal - days) * 86400000);
+          const localDate = new Date(excelEpoch.getTime() + days * 86400000 + ms);
+          timestamp = localDate.toISOString();
+        } else if (typeof dateVal === 'string') {
+          if (dateVal.includes('/')) {
+            // DD/MM/YYYY HH:mm:ss
+            const [dStr, tStr] = dateVal.split(' ');
+            if (dStr && tStr) {
+              const [day, month, year] = dStr.split('/');
+              // Assumindo UTC para salvar no banco corretamente
+              timestamp = `${year}-${month}-${day}T${tStr}.000Z`;
+            }
+          } else {
+            // Tenta converter direto
+            try { timestamp = new Date(dateVal).toISOString(); } catch { }
+          }
+        }
+
+        if (!timestamp) continue;
+
+        // Date Tracking
+        const dObj = new Date(timestamp);
+        if (!minDate || dObj < minDate) minDate = dObj;
+        if (!maxDate || dObj > maxDate) maxDate = dObj;
+
+        // Ignição
+        let ignition = false;
+        if (typeof ignVal === 'boolean') ignition = ignVal;
+        else {
+          const s = String(ignVal).toUpperCase();
+          ignition = ['VERDADEIRO', 'TRUE', 'LIGADA', 'ON', '1'].some(v => s.includes(v));
+        }
+
+        batch.push({
+          asset_id: importAssetId,
+          latitude: lat,
+          longitude: lng,
+          timestamp: timestamp,
+          speed: typeof speedVal === 'string' ? parseFloat(speedVal.replace(',', '.')) : speedVal,
+          ignition: ignition,
+          meta: { source: 'manual_import', original: row }
+        });
+
+        if (batch.length >= BATCH_SIZE) {
+          const { error } = await supabase.from('asset_positions').insert(batch);
+          if (error) throw error;
+          batch = [];
+          processed += BATCH_SIZE;
+          setImportProgress(Math.min(100, Math.round((processed / rows.length) * 100)));
+        }
+      }
+
+      if (batch.length > 0) {
+        const { error } = await supabase.from('asset_positions').insert(batch);
+        if (error) throw error;
+      }
+
+      setImportLog(prev => [...prev, `✅ Sucesso! Total importado: ${processed + batch.length}`]);
+
+      if (minDate && maxDate) {
+        setImportLog(prev => [...prev, `🔄 Recalculando operações de ${minDate?.toLocaleDateString()} a ${maxDate?.toLocaleDateString()}...`]);
+
+        const { error: rpcError } = await supabase.rpc('recalculate_operations', {
+          target_asset_id: importAssetId,
+          start_date: minDate.toISOString().split('T')[0],
+          end_date: maxDate.toISOString().split('T')[0]
+        });
+
+        if (rpcError) {
+          console.error('RPC Error:', rpcError);
+          setImportLog(prev => [...prev, `⚠️ Erro ao recalcular: ${rpcError.message}`]);
+        } else {
+          setImportLog(prev => [...prev, `✅ Operações recalculadas com sucesso!`]);
+        }
+      }
+
+      setTimeout(() => {
+        setIsImportModalOpen(false);
+        alert("Importação Concluída com Sucesso!");
+        queryClient.invalidateQueries({ queryKey: ['fleet'] });
+      }, 1500);
+
+    } catch (error: any) {
+      console.error(error);
+      setImportLog(prev => [...prev, `❌ Erro: ${error.message || error}`]);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   // React Query: Fetch Assets
   const { data: fleetData = [], isLoading } = useQuery({
@@ -170,6 +321,13 @@ const FleetManagement: React.FC = () => {
           <p className="text-slate-500 mt-1">Monitoramento em tempo real de ativos e telemetria.</p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="bg-slate-800 hover:bg-slate-700 transition-all text-white px-6 py-2.5 rounded-xl text-sm font-bold border border-slate-700 flex items-center gap-2"
+          >
+            <Upload size={18} />
+            Importar GPS
+          </button>
           <button
             onClick={handleExportPDF}
             className="bg-slate-800 hover:bg-slate-700 transition-all text-white px-6 py-2.5 rounded-xl text-sm font-bold border border-slate-700 flex items-center gap-2"
@@ -502,6 +660,88 @@ const FleetManagement: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Import Modal */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-[500px] p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Upload className="text-blue-600" /> Importar Histórico GPS
+              </h2>
+              <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Selecione o Veículo</label>
+                <select
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white text-slate-900"
+                  value={importAssetId}
+                  onChange={e => setImportAssetId(e.target.value)}
+                >
+                  <option value="">-- Escolha um Ativo --</option>
+                  {fleetData?.map(a => (
+                    <option key={a.id} value={a.id}>{a.title || a.name || a.id}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Arquivo Excel/CSV</label>
+                <div
+                  className="border-2 border-dashed border-slate-300 rounded-lg p-6 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition-colors cursor-pointer relative"
+                  onClick={() => document.getElementById('gps-upload-input')?.click()}
+                >
+                  <input
+                    id="gps-upload-input"
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    className="hidden"
+                    onChange={e => setImportFile(e.target.files?.[0] || null)}
+                  />
+                  <FileSpreadsheet className="text-slate-400 mb-2" size={32} />
+                  <span className="text-sm text-slate-600 font-medium">
+                    {importFile ? importFile.name : "Clique para selecionar arquivo"}
+                  </span>
+                  <span className="text-xs text-slate-400 mt-1">Suporta .xlsx e .csv (Selsyn)</span>
+                </div>
+              </div>
+
+              {importLog.length > 0 && (
+                <div className="bg-slate-100 p-3 rounded-lg text-xs font-mono h-32 overflow-y-auto text-slate-600 border border-slate-200">
+                  {importLog.map((l, i) => <div key={i}>{l}</div>)}
+                </div>
+              )}
+
+              {isImporting && (
+                <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                  <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${importProgress}%` }}></div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  onClick={() => setIsImportModalOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium transition-colors"
+                  disabled={isImporting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleImportGPS}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors shadow-lg shadow-blue-600/20"
+                  disabled={!importFile || !importAssetId || isImporting}
+                >
+                  {isImporting ? <><RefreshCw className="animate-spin" size={16} /> Processando...</> : 'Iniciar Importação'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

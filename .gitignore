@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Ignorar arquivos grandes e backups
+*.mdb
+*.bak
+backups/
+*.zip
+*.rar
+.claude/

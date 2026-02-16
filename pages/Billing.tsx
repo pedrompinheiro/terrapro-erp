@@ -34,6 +34,14 @@ const Billing: React.FC = () => {
         </div>
       </div>
 
+      <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4">
+        <div className="bg-amber-500 p-2 rounded-lg text-white"><FileWarning size={20} /></div>
+        <div>
+          <h4 className="font-bold text-amber-500 text-sm">Módulo em Desenvolvimento</h4>
+          <p className="text-xs text-amber-200/70">Este painel exibe dados de demonstração. A integração real com a SEFAZ e os lançamentos automáticos no Financeiro estarão disponíveis na próxima atualização.</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard
           title="Total Medido (Mês)"
@@ -96,12 +104,12 @@ const Billing: React.FC = () => {
                   <td className="px-8 py-6">
                     <div className="flex justify-center">
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter flex items-center gap-2 ${m.status === 'AUTHORIZED' ? 'bg-emerald-500/10 text-emerald-500' :
-                          m.status === 'PROCESSING' ? 'bg-blue-500/10 text-blue-500 animate-pulse' :
-                            'bg-red-500/10 text-red-500'
+                        m.status === 'PROCESSING' ? 'bg-blue-500/10 text-blue-500 animate-pulse' :
+                          'bg-red-500/10 text-red-500'
                         }`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${m.status === 'AUTHORIZED' ? 'bg-emerald-500' :
-                            m.status === 'PROCESSING' ? 'bg-blue-500' :
-                              'bg-red-500'
+                          m.status === 'PROCESSING' ? 'bg-blue-500' :
+                            'bg-red-500'
                           }`} />
                         {m.status === 'AUTHORIZED' ? 'Autorizada' :
                           m.status === 'PROCESSING' ? 'Em Processamento' : 'Rejeitada SEFAZ'}

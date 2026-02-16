@@ -1,29 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
-import Inventory from './pages/Inventory';
-import DailyControl from './pages/DailyControl';
-import FleetManagement from './pages/FleetManagement';
-import Maintenance from './pages/Maintenance';
-import Financial from './pages/Financial';
-import MapDigital from './pages/MapDigital';
-import FuelManagement from './pages/FuelManagement';
-import Billing from './pages/Billing';
-import BIReports from './pages/BIReports';
-import Login from './pages/Login';
-import WhatsAppAutomation from './pages/WhatsAppAutomation';
-import AIAssistant from './components/AIAssistant';
-import Registrations from './pages/Registrations';
-import Settings from './pages/Settings';
-import HRManagement from './pages/HRManagement';
-import Timekeeping from './pages/Timekeeping';
-import OperationsMap from './pages/OperationsMap';
-import SecurityAudit from './pages/SecurityAudit';
-import Documents from './pages/Documents';
-import UpdatePassword from './pages/UpdatePassword';
-import Migration from './pages/Migration';
-import TestConnection from './pages/TestConnection';
+import LoadingSpinner from './components/LoadingSpinner';
+import ErrorBoundary from './components/ErrorBoundary';
+
+// Lazy load de todas as páginas
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Inventory = lazy(() => import('./pages/Inventory'));
+const DailyControl = lazy(() => import('./pages/DailyControl'));
+const FleetManagement = lazy(() => import('./pages/FleetManagement'));
+const Maintenance = lazy(() => import('./pages/Maintenance'));
+const Financial = lazy(() => import('./pages/Financial'));
+const MapDigital = lazy(() => import('./pages/MapDigital'));
+const FuelManagement = lazy(() => import('./pages/FuelManagement'));
+const Billing = lazy(() => import('./pages/Billing'));
+const BIReports = lazy(() => import('./pages/BIReports'));
+const Login = lazy(() => import('./pages/Login'));
+const WhatsAppAutomation = lazy(() => import('./pages/WhatsAppAutomation'));
+const AIAssistant = lazy(() => import('./components/AIAssistant'));
+const Registrations = lazy(() => import('./pages/Registrations'));
+const Settings = lazy(() => import('./pages/Settings'));
+const HRManagement = lazy(() => import('./pages/HRManagement'));
+const Timekeeping = lazy(() => import('./pages/Timekeeping'));
+const OperationsMap = lazy(() => import('./pages/OperationsMap'));
+const SecurityAudit = lazy(() => import('./pages/SecurityAudit'));
+const Documents = lazy(() => import('./pages/Documents'));
+const UpdatePassword = lazy(() => import('./pages/UpdatePassword'));
+const Migration = lazy(() => import('./pages/Migration'));
+const TestConnection = lazy(() => import('./pages/TestConnection'));
+const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 
 import { supabase } from './lib/supabase';
 import { UserProfile } from './types';
@@ -72,7 +78,11 @@ const App: React.FC = () => {
   }
 
   if (!session) {
-    return <Login onLogin={() => { }} />;
+    return (
+      <Suspense fallback={<LoadingSpinner fullScreen message="Carregando..." />}>
+        <Login onLogin={() => { }} />
+      </Suspense>
+    );
   }
 
   // STATUS CHECK: Block access if Pending
@@ -111,65 +121,95 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex bg-slate-950 text-slate-100 min-h-screen">
-      <Sidebar
-        onLogout={handleLogout}
-      />
+    <ErrorBoundary>
+      <div className="flex bg-slate-950 text-slate-100 min-h-screen">
+        <Sidebar
+          onLogout={handleLogout}
+        />
 
-      <main className="flex-1 ml-72 min-h-screen flex flex-col">
-        {/* Header Superior Industrial TERRAPRO */}
-        <header className="h-16 border-b border-slate-900 bg-slate-950 flex items-center justify-between px-10 sticky top-0 z-40">
-          <div className="flex items-center gap-6">
-            <div className="text-[10px] font-black text-slate-500 border border-slate-800 px-3 py-1 uppercase tracking-[0.2em] bg-slate-900 shadow-inner">
-              SISTEMA <span className="text-[#007a33]">TERRAPRO</span> v4.2.1
+        <main className="flex-1 ml-72 min-h-screen flex flex-col">
+          {/* Header Superior Industrial TERRAPRO */}
+          <header className="h-16 border-b border-slate-900 bg-slate-950 flex items-center justify-between px-10 sticky top-0 z-40">
+            <div className="flex items-center gap-6">
+              <div className="text-[10px] font-black text-slate-500 border border-slate-800 px-3 py-1 uppercase tracking-[0.2em] bg-slate-900 shadow-inner">
+                SISTEMA <span className="text-[#007a33]">TERRAPRO</span> v4.2.1
+              </div>
+              <div className="h-4 w-[1px] bg-slate-800"></div>
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
+                Unidade: DOURADOS / MS
+              </div>
             </div>
-            <div className="h-4 w-[1px] bg-slate-800"></div>
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
-              Unidade: DOURADOS / MS
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-[#007a33] rounded-full animate-pulse"></div>
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sincronização Ativa</span>
+              </div>
+              <div className="h-8 w-[1px] bg-slate-900"></div>
+              <button className="text-slate-600 hover:text-[#007a33] transition-colors relative">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-[#007a33]"></span>
+              </button>
             </div>
-          </div>
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#007a33] rounded-full animate-pulse"></div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sincronização Ativa</span>
-            </div>
-            <div className="h-8 w-[1px] bg-slate-900"></div>
-            <button className="text-slate-600 hover:text-[#007a33] transition-colors relative">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-[#007a33]"></span>
-            </button>
-          </div>
-        </header>
+          </header>
 
-        <div className="flex-1 custom-scrollbar">
-          <Routes>
-            <Route path="/update-password" element={<UpdatePassword />} />
-            <Route path="/migracao" element={<Migration />} />
-            <Route path="/teste" element={<TestConnection />} />
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/bi" element={<BIReports />} />
-            <Route path="/inventory" element={<Inventory />} />
-            <Route path="/daily" element={<DailyControl />} />
-            <Route path="/fleet" element={<FleetManagement />} />
-            <Route path="/maintenance" element={<Maintenance />} />
-            <Route path="/financial" element={<Financial />} />
-            <Route path="/billing" element={<Billing />} />
-            <Route path="/map" element={<MapDigital />} />
-            <Route path="/fuel" element={<FuelManagement />} />
-            <Route path="/whatsapp" element={<WhatsAppAutomation />} />
-            <Route path="/rh" element={<HRManagement />} />
-            <Route path="/cadastros" element={<Registrations />} />
-            <Route path="/operations-map" element={<OperationsMap />} />
-            <Route path="/documents" element={<Documents />} />
-            <Route path="/security" element={<SecurityAudit />} />
-            <Route path="/configuracoes" element={<Settings />} />
-          </Routes>
-        </div>
-      </main>
-      <AIAssistant />
-    </div>
+          <div className="flex-1 custom-scrollbar">
+            <Suspense fallback={<LoadingSpinner fullScreen message="Carregando página..." />}>
+              <Routes>
+                <Route path="/update-password" element={<UpdatePassword />} />
+                <Route path="/migracao" element={<Migration />} />
+                <Route path="/teste" element={<TestConnection />} />
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/bi" element={<BIReports />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/daily" element={<DailyControl />} />
+                <Route path="/fleet" element={<FleetManagement />} />
+                <Route path="/maintenance" element={<Maintenance />} />
+                <Route path="/financial" element={<Financial />} />
+                <Route path="/billing" element={<Billing />} />
+                <Route path="/map" element={<MapDigital />} />
+                <Route path="/fuel" element={<FuelManagement />} />
+                <Route path="/whatsapp" element={<WhatsAppAutomation />} />
+                <Route path="/rh" element={<HRManagement />} />
+                <Route path="/cadastros" element={<Registrations />} />
+                <Route path="/operations-map" element={<OperationsMap />} />
+                <Route path="/documents" element={<Documents />} />
+                <Route path="/security" element={<SecurityAudit />} />
+                <Route path="/configuracoes" element={<Settings />} />
+                <Route path="/system-logs" element={<SystemLogs />} />
+              </Routes>
+            </Suspense>
+          </div>
+        </main>
+        <Suspense fallback={null}>
+          <AIAssistant />
+        </Suspense>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: '#1e293b',
+              color: '#fff',
+              border: '1px solid #334155',
+            },
+            success: {
+              iconTheme: {
+                primary: '#10b981',
+                secondary: '#fff',
+              },
+            },
+            error: {
+              iconTheme: {
+                primary: '#ef4444',
+                secondary: '#fff',
+              },
+            },
+          }}
+        />
+      </div>
+    </ErrorBoundary>
   );
 };
 

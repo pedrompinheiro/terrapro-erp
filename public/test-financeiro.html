@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Módulo Financeiro - TerraPro ERP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gradient-to-br from-slate-900 via-purple-900/20 to-slate-900 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-4xl font-bold text-white mb-8">🧪 Teste do Módulo Financeiro</h1>
+
+        <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-lg p-6 mb-6">
+            <h2 class="text-2xl font-semibold text-white mb-4">Status dos Arquivos</h2>
+            <div id="file-status" class="space-y-2">
+                <div class="text-gray-400">Carregando...</div>
+            </div>
+        </div>
+
+        <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-lg p-6 mb-6">
+            <h2 class="text-2xl font-semibold text-white mb-4">Teste de Navegação</h2>
+            <div class="space-y-3">
+                <a href="/financial"
+                    class="block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-center font-semibold transition">
+                    ➡️ Ir para Módulo Financeiro
+                </a>
+                <p class="text-gray-400 text-sm text-center">
+                    Click acima para abrir a página financeira
+                </p>
+            </div>
+        </div>
+
+        <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-lg p-6">
+            <h2 class="text-2xl font-semibold text-white mb-4">Console de Teste</h2>
+            <div class="bg-black/50 rounded-lg p-4 mb-4">
+                <code class="text-green-400 text-sm">
+                    <div>// Abra o console (F12) e execute:</div>
+                    <div class="mt-2">fetch('/api/health').then(r => r.json()).then(console.log)</div>
+                </code>
+            </div>
+            <button onclick="testModules()"
+                class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-semibold transition w-full">
+                🧪 Testar Módulos
+            </button>
+            <div id="test-results" class="mt-4 space-y-2"></div>
+        </div>
+
+        <div class="mt-8 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-6">
+            <h3 class="text-yellow-300 font-semibold mb-2">⚠️ Problemas Comuns</h3>
+            <ul class="text-yellow-200 space-y-2 text-sm">
+                <li>✅ <strong>Botões não funcionam?</strong> → Abra console (F12) e veja os erros</li>
+                <li>✅ <strong>Tela branca?</strong> → Recarregue a página (Ctrl+R)</li>
+                <li>✅ <strong>"Cannot read property"?</strong> → Normal! Services estão carregando</li>
+                <li>✅ <strong>Dados vazios?</strong> → Insira dados de teste no Supabase</li>
+            </ul>
+        </div>
+
+        <div class="mt-8 text-center">
+            <p class="text-gray-400 text-sm">
+                📝 Veja o console do browser (F12) para mais detalhes
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Verificar arquivos
+        async function checkFiles() {
+            const files = [
+                '/services/paymentService.ts',
+                '/services/receivableService.ts',
+                '/services/reportService.ts',
+                '/services/cnabService.ts',
+                '/services/bankingService.ts',
+                '/pages/FinancialNew.tsx',
+            ];
+
+            const statusDiv = document.getElementById('file-status');
+            statusDiv.innerHTML = '';
+
+            for (const file of files) {
+                const div = document.createElement('div');
+                div.className = 'flex items-center gap-2';
+
+                try {
+                    const response = await fetch(file, { method: 'HEAD' });
+                    if (response.ok || response.status === 403) { // 403 = existe mas sem permissão
+                        div.innerHTML = `<span class="text-green-400">✅</span> <span class="text-white">${file}</span>`;
+                    } else {
+                        div.innerHTML = `<span class="text-red-400">❌</span> <span class="text-red-300">${file}</span>`;
+                    }
+                } catch (error) {
+                    div.innerHTML = `<span class="text-yellow-400">⚠️</span> <span class="text-yellow-300">${file} (não verificável)</span>`;
+                }
+
+                statusDiv.appendChild(div);
+            }
+        }
+
+        // Testar módulos
+        async function testModules() {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML = '<div class="text-yellow-400">🔄 Testando...</div>';
+
+            const tests = [
+                { name: 'React carregado', test: () => typeof React !== 'undefined' },
+                { name: 'Supabase disponível', test: () => typeof window.supabase !== 'undefined' },
+                { name: 'Router disponível', test: () => typeof window.ReactRouter !== 'undefined' },
+            ];
+
+            resultsDiv.innerHTML = '';
+
+            tests.forEach(({ name, test }) => {
+                const div = document.createElement('div');
+                try {
+                    const result = test();
+                    div.className = result ? 'text-green-400' : 'text-red-400';
+                    div.textContent = `${result ? '✅' : '❌'} ${name}`;
+                } catch (error) {
+                    div.className = 'text-yellow-400';
+                    div.textContent = `⚠️ ${name}: ${error.message}`;
+                }
+                resultsDiv.appendChild(div);
+            });
+
+            // Log no console também
+            console.log('=== TESTE DO MÓDULO FINANCEIRO ===');
+            console.log('Abra /financial para ver a página');
+            console.log('Se tiver erros, copie e envie para o desenvolvedor');
+        }
+
+        // Check files on load
+        checkFiles();
+
+        // Info no console
+        console.log('%c🚀 MÓDULO FINANCEIRO ATIVADO!', 'font-size: 20px; color: #10b981; font-weight: bold');
+        console.log('%cAcesse: /financial', 'font-size: 14px; color: #60a5fa');
+        console.log('%cSe tiver problemas, screenshot dos erros aqui no console', 'font-size: 12px; color: #fbbf24');
+    </script>
+</body>
+
+</html>

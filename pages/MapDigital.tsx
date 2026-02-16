@@ -1,30 +1,69 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Map as MapIcon, Zap, Battery, Signal, Navigation, Search, Key, Gauge, Radio, Locate, MapPin, RefreshCw, X, Play, Pause, ChevronLeft, ChevronRight, AlertTriangle, Info, Clock, Layers, Maximize } from 'lucide-react';
-import { dashboardService } from '../services/api';
-import { Asset } from '../types';
+import { RefreshCw, Radio, Search, Gauge, Map as MapIcon, Key, Battery, Signal, Zap, MapPin, Locate, ChevronLeft, Layers, Play, Pause, Maximize, AlertTriangle, CloudRain, Sun, Moon, Calendar, History, Settings } from 'lucide-react';
+import { fleetManagementService } from '../services/fleetService';
+import { Asset, AssetStatus } from '../types';
+import L from 'leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, CircleMarker, LayersControl } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import { supabase } from '../lib/supabase';
+
+// Fix Leaflet Default Icon
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+   iconUrl: markerIcon,
+   shadowUrl: markerShadow,
+   iconSize: [25, 41],
+   iconAnchor: [12, 41]
+});
+L.Marker.prototype.options.icon = DefaultIcon;
+
+// Custom Icons
+const createVehicleIcon = (type: string, status: AssetStatus, isSelected: boolean) => {
+   let color = status === 'OPERATING' ? '#10b981' : status === 'IDLE' ? '#f59e0b' : '#64748b';
+   if (isSelected) color = '#3b82f6';
+
+   const html = `
+        <div style="
+            background-color: ${color};
+            width: ${isSelected ? '40px' : '32px'};
+            height: ${isSelected ? '40px' : '32px'};
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        ">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
+            </svg>
+        </div>
+        <div style="margin-top:4px;background:rgba(0,0,0,0.8);color:white;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:bold;text-align:center;white-space:nowrap;">
+            ${type}
+        </div>
+    `;
+
+   return L.divIcon({ html, className: '', iconSize: [32, 50], iconAnchor: [16, 50] });
+};
+
+const createEventIcon = (type: 'START' | 'STOP') => {
+   return L.divIcon({
+      html: `<div style="background:${type === 'START' ? '#10b981' : '#ef4444'};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
+      className: '', iconSize: [12, 12]
+   });
+};
 
 type ViewMode = 'LIVE' | 'HISTORY';
 
-interface HistoryPoint {
-   id: number;
-   lat: number;
-   lng: number;
-   timestamp: string;
-   speed: number;
-   ignition: boolean;
-   event?: 'STOP' | 'START' | 'SPEEDING' | 'GEOFENCE';
-}
-
-const mockHistoryData: HistoryPoint[] = Array.from({ length: 50 }, (_, i) => ({
-   id: i,
-   lat: 30 + (i * 0.5), // Simulated coords
-   lng: 40 + (Math.sin(i) * 10),
-   timestamp: `30/01/2026 17:${String(i).padStart(2, '0')}:12`,
-   speed: i % 10 === 0 ? 0 : Math.floor(Math.random() * 60),
-   ignition: i % 10 !== 0,
-   event: i % 15 === 0 ? 'SPEEDING' : i % 10 === 0 ? 'STOP' : undefined
-}));
+const MapUpdater = ({ center }: { center: [number, number] | null }) => {
+   const map = useMap();
+   useEffect(() => { if (center) map.flyTo(center, 15); }, [center, map]);
+   return null;
+};
 
 const MapDigital: React.FC = () => {
    const [assets, setAssets] = useState<Asset[]>([]);
@@ -32,394 +71,297 @@ const MapDigital: React.FC = () => {
    const [searchTerm, setSearchTerm] = useState('');
    const [loading, setLoading] = useState(true);
    const [viewMode, setViewMode] = useState<ViewMode>('LIVE');
+   const [mapCenter, setMapCenter] = useState<[number, number]>([-15.6014, -56.0979]);
 
    // History State
-   const [historyPoints, setHistoryPoints] = useState<HistoryPoint[]>([]);
-   const [isPlaying, setIsPlaying] = useState(false);
+   const [historyDate, setHistoryDate] = useState(new Date().toISOString().split('T')[0]);
+   const [historyPoints, setHistoryPoints] = useState<any[]>([]);
    const [playbackIndex, setPlaybackIndex] = useState(0);
+   const [isPlaying, setIsPlaying] = useState(false);
    const playbackInterval = useRef<NodeJS.Timeout | null>(null);
 
+   // Load Live Data
    useEffect(() => {
       const loadAssets = async () => {
+         if (assets.length === 0) setLoading(true);
          try {
-            const data = await dashboardService.getAssets() as Asset[];
+            const data = await fleetManagementService.getAssets();
             setAssets(data);
-            if (data.length > 0) setSelectedAssetId(data[0].id);
-         } catch (error) {
-            console.error("Failed to load assets", error);
-         } finally {
-            setLoading(false);
-         }
+            if (!selectedAssetId && data.length > 0) {
+               const first = data.find(a => a.coordinates?.lat && a.coordinates.lat !== 0);
+               if (first) setMapCenter([first.coordinates!.lat, first.coordinates!.lng]);
+            }
+         } catch (error) { console.error(error); } finally { setLoading(false); }
       };
       loadAssets();
+      const interval = setInterval(loadAssets, 10000);
+      return () => clearInterval(interval);
    }, []);
 
-   // Load history when entering history mode
+   // Load History Data
    useEffect(() => {
-      if (viewMode === 'HISTORY') {
-         setHistoryPoints(mockHistoryData);
-         setPlaybackIndex(0);
-      }
-   }, [viewMode]);
+      if (viewMode === 'HISTORY' && selectedAssetId) {
+         const loadHistory = async () => {
+            const { data, error } = await supabase
+               .from('asset_positions')
+               .select('*')
+               .eq('asset_id', selectedAssetId)
+               .gte('timestamp', `${historyDate}T00:00:00`)
+               .lte('timestamp', `${historyDate}T23:59:59`)
+               .order('timestamp', { ascending: true });
 
-   // Playback Logic
+            if (data && data.length > 0) {
+               let lastIgn = false;
+               const points = data.map((d, i) => {
+                  let evt = null;
+                  if (d.ignition && !lastIgn) evt = 'START';
+                  if (!d.ignition && lastIgn) evt = 'STOP';
+                  lastIgn = d.ignition;
+                  return { ...d, lat: d.latitude, lng: d.longitude, event: evt, index: i };
+               });
+               setHistoryPoints(points);
+               setPlaybackIndex(0);
+               setMapCenter([points[0].lat, points[0].lng]);
+            } else {
+               setHistoryPoints([]);
+               if (!isLoadingAsset) alert("Nenhum histórico encontrado para esta data.");
+            }
+         };
+         loadHistory();
+      }
+   }, [viewMode, selectedAssetId, historyDate]);
+
+   // Playback Function
    useEffect(() => {
       if (isPlaying) {
          playbackInterval.current = setInterval(() => {
-            setPlaybackIndex(prev => {
-               if (prev >= historyPoints.length - 1) {
-                  setIsPlaying(false);
-                  return prev;
-               }
-               return prev + 1;
-            });
-         }, 500);
-      } else {
-         if (playbackInterval.current) clearInterval(playbackInterval.current);
+            setPlaybackIndex(p => (p >= historyPoints.length - 1 ? (setIsPlaying(false), p) : p + 1));
+         }, 200);
+      } else if (playbackInterval.current) {
+         clearInterval(playbackInterval.current);
       }
-      return () => {
-         if (playbackInterval.current) clearInterval(playbackInterval.current);
-      };
+      return () => clearInterval(playbackInterval.current!);
    }, [isPlaying, historyPoints]);
 
-   const selectedAsset = assets.find(a => a.id === selectedAssetId);
    const filteredAssets = assets.filter(a =>
       a.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.id.toLowerCase().includes(searchTerm.toLowerCase())
+      a.code.toLowerCase().includes(searchTerm.toLowerCase())
    );
+   const connectedCount = assets.filter(a => a.coordinates && a.coordinates.lat !== 0).length;
+   const selectedAsset = assets.find(a => a.id === selectedAssetId);
+   const validAssets = filteredAssets.filter(a => a.coordinates && a.coordinates.lat !== 0);
+   const historyPolyline = historyPoints.map(p => [p.lat, p.lng] as [number, number]);
+   const currentHistoryPoint = historyPoints[playbackIndex];
+   const isLoadingAsset = loading && assets.length === 0;
 
-   const activeCount = assets.filter(a => a.status === 'OPERATING').length;
+   // Auto-Tracker (Frontend-based Backup for History)
+   useEffect(() => {
+      if (assets.length === 0) return;
 
-   if (loading) {
-      return (
-         <div className="flex h-full items-center justify-center bg-slate-950 text-white">
-            <div className="flex flex-col items-center gap-4">
-               <RefreshCw className="animate-spin text-emerald-500" size={40} />
-               <p className="text-sm font-bold uppercase tracking-widest text-slate-500">Carregando Satélites...</p>
-            </div>
-         </div>
-      );
-   }
+      const tracker = async () => {
+         console.log("🛠️ Auto-Tracker: Verificando posições...");
+         try {
+            const { fetchFleetPositions } = await import('../services/selsyn');
+            const positions = await fetchFleetPositions();
+
+            if (positions.length > 0) {
+               const inserts: any[] = [];
+               for (const pos of positions) {
+                  // Normalize logic
+                  const pName = pos.rastreavel ? pos.rastreavel.toUpperCase().replace(/[\s-]/g, '') : '';
+                  const pCode = pos.identificador.toUpperCase().replace(/[\s-]/g, '');
+
+                  const asset = assets.find(a => {
+                     const aCode = a.code.toUpperCase().replace(/[\s-]/g, '');
+                     const aName = a.name.toUpperCase().replace(/[\s-]/g, '');
+                     return pCode === aCode || pName === aCode || pName === aName;
+                  });
+
+                  if (asset) {
+                     inserts.push({
+                        asset_id: asset.id,
+                        latitude: pos.latitude,
+                        longitude: pos.longitude,
+                        speed: pos.velocidade || 0,
+                        ignition: pos.ignicao || false,
+                        timestamp: pos.dataHora || new Date().toISOString(),
+                        meta: pos
+                     });
+                  }
+               }
+
+               if (inserts.length > 0) {
+                  const { error } = await supabase.from('asset_positions').insert(inserts);
+               }
+            }
+         } catch (e) { console.error("AutoTracker Exception:", e); }
+      };
+
+      // Run immediately ensuring no duplicates if recently run? No, just loop.
+      const interval = setInterval(tracker, 60000); // Reativado: Servidor Selsyn voltou
+      return () => clearInterval(interval);
+   }, [assets]);
 
    return (
-      <div className="flex h-full overflow-hidden bg-slate-950">
-         {/* Sidebar toggle based on mode */}
-         {viewMode === 'LIVE' ? (
-            <div className="w-96 border-r border-slate-800 flex flex-col bg-slate-900 z-10 transition-all">
-               <div className="p-4 border-b border-slate-800 space-y-4">
-                  <div className="flex justify-between items-center">
-                     <h2 className="font-bold text-white flex items-center gap-2">
-                        <Radio size={18} className="text-emerald-500 animate-pulse" />
-                        Frota Conectada
-                     </h2>
-                     <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-500 px-2 py-1 rounded">
-                        {activeCount} Online
-                     </span>
-                  </div>
-                  <div className="relative">
-                     <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
-                     <input
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Buscar ativo ou placa..."
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
-                     />
+      <div className="flex h-full overflow-hidden bg-slate-950 text-white font-sans">
+         {/* SIDEBAR */}
+         <div className="w-80 flex flex-col border-r border-slate-800 bg-slate-900 z-20 shadow-xl">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-800">
+               <div className="flex items-center justify-between mb-4">
+                  <h1 className="font-bold flex items-center gap-2 text-lg">
+                     <MapIcon className="text-blue-500" /> Mapa Digital
+                  </h1>
+                  <div className="flex bg-slate-800 rounded p-1">
+                     <button onClick={() => setViewMode('LIVE')} className={`px-3 py-1 text-xs rounded ${viewMode === 'LIVE' ? 'bg-blue-600' : 'text-slate-400'}`}>Ao Vivo</button>
+                     <button onClick={() => setViewMode('HISTORY')} className={`px-3 py-1 text-xs rounded ${viewMode === 'HISTORY' ? 'bg-blue-600' : 'text-slate-400'}`}>Histórico</button>
                   </div>
                </div>
 
-               <div className="flex-1 overflow-y-auto custom-scrollbar">
-                  {filteredAssets.map(asset => (
-                     <div
-                        key={asset.id}
-                        onClick={() => setSelectedAssetId(asset.id)}
-                        className={`p-4 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors group ${selectedAssetId === asset.id ? 'bg-slate-800 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'
-                           }`}
-                     >
-                        <div className="flex justify-between items-start mb-2">
-                           <span className="font-bold text-white text-sm">{asset.name}</span>
-                           {asset.telemetry?.ignition ? (
-                              <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold bg-emerald-400/10 px-1.5 py-0.5 rounded">
-                                 <Key size={10} /> ON
-                              </span>
-                           ) : (
-                              <span className="flex items-center gap-1 text-[10px] text-slate-500 font-bold bg-slate-500/10 px-1.5 py-0.5 rounded">
-                                 <Key size={10} /> OFF
-                              </span>
-                           )}
-                        </div>
-                        <div className="flex justify-between items-center text-xs text-slate-400">
-                           <span>{asset.id}</span>
-                           <span className="flex items-center gap-1">
-                              <Gauge size={12} /> {asset.telemetry?.speed || 0} km/h
-                           </span>
-                        </div>
-                        <div className="mt-2 text-[10px] text-slate-500 truncate flex items-center gap-1">
-                           <MapIcon size={10} />
-                           {asset.telemetry?.address || 'Localização não disponível'}
-                        </div>
+               {/* Controls */}
+               {viewMode === 'LIVE' ? (
+                  <div className="space-y-2">
+                     <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>{connectedCount} Rastreando</span>
+                        {connectedCount === 0 && <span className="text-red-400 flex items-center gap-1"><AlertTriangle size={10} /> Sem Sinal</span>}
                      </div>
-                  ))}
-               </div>
-            </div>
-         ) : null}
-
-         {/* Main Map Visualization */}
-         <div className="flex-1 relative bg-[#0f1014] overflow-hidden">
-            {/* Simulated Map Background - Darker for History */}
-            <div
-               className="absolute inset-0 opacity-30"
-               style={{
-                  backgroundImage: viewMode === 'HISTORY'
-                     ? 'url(https://mt1.google.com/vt/lyrs=s&x=1&y=1&z=1)' // Mock Satellite texture concept
-                     : 'radial-gradient(#334155 1px, transparent 1px)',
-                  backgroundSize: 'cover',
-                  backgroundColor: '#0f1710' // Dark green tint for satellite feel
-               }}
-            >
-               {/* CSS Grid Overlay */}
-               <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)', backgroundSize: '50px 50px' }}></div>
-            </div>
-
-            {/* Map Controls (Top Left) */}
-            <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-               <button className="p-2 bg-white text-slate-900 rounded-lg shadow-xl hover:bg-slate-200"><Search size={20} /></button>
-               <button className="p-2 bg-white text-slate-900 rounded-lg shadow-xl hover:bg-slate-200"><Maximize size={20} /></button>
-            </div>
-            {/* Map Layer Controls (Top Right - Inside Map) */}
-            <div className="absolute top-4 right-4 z-20 bg-white p-2 rounded-lg shadow-xl flex flex-col gap-2">
-               <button className="p-1 hover:bg-slate-100 rounded" title="Map Layers"><Layers size={20} className="text-slate-700" /></button>
-            </div>
-
-            {/* Render LIVE Assets or HISTORY Path */}
-            {viewMode === 'LIVE' ? (
-               assets.map((asset, index) => (
-                  <div
-                     key={asset.id}
-                     onClick={() => setSelectedAssetId(asset.id)}
-                     className={`absolute cursor-pointer transition-all duration-500 flex flex-col items-center group
-                                        ${selectedAssetId === asset.id ? 'z-50 scale-110' : 'z-0 opacity-70 hover:opacity-100'}
-                                    `}
-                     style={{
-                        top: `${40 + (index * 15)}%`,
-                        left: `${30 + (index * 20)}%`
-                     }}
-                  >
-                     <div className={`
-                                        relative flex items-center justify-center w-12 h-12 rounded-full border-4 shadow-2xl transition-all
-                                        ${selectedAssetId === asset.id
-                           ? 'bg-blue-600 border-white shadow-blue-500/50'
-                           : asset.telemetry?.ignition
-                              ? 'bg-emerald-600 border-slate-900 group-hover:border-emerald-400'
-                              : 'bg-slate-700 border-slate-900 group-hover:border-slate-500'
-                        }
-                                    `}>
-                        <Navigation size={20} className="text-white fill-white transform rotate-45" />
-                        {asset.telemetry?.speed && asset.telemetry.speed > 0 && (
-                           <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-30 animate-ping"></span>
-                        )}
-                     </div>
-                     <div className={`mt-2 px-3 py-1 rounded-full text-xs font-bold shadow-lg transition-all ${selectedAssetId === asset.id ? 'bg-white text-black scale-100' : 'bg-slate-900 text-white scale-0 group-hover:scale-100'}`}>
-                        {asset.name}
-                     </div>
+                     {connectedCount === 0 && (
+                        <button onClick={async () => {
+                           if (!confirm("Sincronizar base de veículos?")) return;
+                           try {
+                              const { importSelsynVehicles } = await import('../services/selsynImporter');
+                              await importSelsynVehicles(console.log);
+                              alert("Sincronizado! Recarregando...");
+                              window.location.reload();
+                           } catch (e) { alert("Erro: " + e); }
+                        }} className="w-full bg-emerald-500/10 text-emerald-500 text-xs py-2 rounded hover:bg-emerald-500/20">
+                           🔄 Sincronizar Cadastro
+                        </button>
+                     )}
                   </div>
-               ))
-            ) : (
-               // HISTORY SVG PATH OVERLAY
-               <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                  <defs>
-                     <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
-                        <path d="M0,0 L0,10 L10,5 z" fill="#10b981" />
-                     </marker>
-                  </defs>
-                  {/* Simulation of a chaotic path */}
-                  <polyline
-                     points="200,100 250,150 220,200 300,300 400,250 500,350"
-                     fill="none"
-                     stroke="#3b82f6"
-                     strokeWidth="4"
-                     strokeDasharray="10,5"
+               ) : (
+                  <div className="space-y-2">
+                     <label className="text-xs text-slate-400">Data do Histórico</label>
+                     <div className="flex items-center gap-2 bg-slate-800 p-2 rounded">
+                        <Calendar size={14} className="text-slate-500" />
+                        <input type="date" value={historyDate} onChange={e => setHistoryDate(e.target.value)} className="bg-transparent text-sm w-full outline-none" />
+                     </div>
+                     {!selectedAssetId && <p className="text-xs text-yellow-500">Selecione um veículo abaixo.</p>}
+                  </div>
+               )}
+
+               <div className="mt-4 relative">
+                  <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
+                  <input
+                     value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                     placeholder="Buscar veículo..."
+                     className="w-full bg-slate-950 rounded pl-9 pr-3 py-2 text-sm outline-none border border-slate-800 focus:border-blue-500"
                   />
-                  {/* Drawing simulated points */}
-                  {historyPoints.slice(0, playbackIndex + 1).map((pt, i) => (
-                     <g key={i} transform={`translate(${200 + (i * 10)}, ${100 + (Math.sin(i) * 50) + (i * 5)})`}>
-                        <circle r="4" fill={pt.event === 'STOP' ? '#ef4444' : pt.event === 'SPEEDING' ? '#f59e0b' : '#10b981'} stroke="white" strokeWidth="2" />
-                     </g>
-                  ))}
-                  {/* Current Playback Head */}
-                  <g transform={`translate(${200 + (playbackIndex * 10)}, ${100 + (Math.sin(playbackIndex) * 50) + (playbackIndex * 5)})`}>
-                     <circle r="10" fill="white" className="animate-pulse" />
-                     <circle r="6" fill="#10b981" />
-                  </g>
-               </svg>
+               </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto">
+               {filteredAssets.map(asset => (
+                  <div key={asset.id} onClick={() => { setSelectedAssetId(asset.id); if (asset.coordinates?.lat) setMapCenter([asset.coordinates.lat, asset.coordinates.lng]); }}
+                     className={`p-3 border-b border-slate-800 cursor-pointer hover:bg-slate-800 ${selectedAssetId === asset.id ? 'bg-slate-800 border-l-4 border-l-blue-500' : ''}`}
+                  >
+                     <div className="flex justify-between">
+                        <span className="font-bold text-sm">{asset.code}</span>
+                        <span className={`text-[10px] px-1 rounded ${asset.status === 'OPERATING' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>{asset.status}</span>
+                     </div>
+                     <p className="text-xs text-slate-400 truncate">{asset.name}</p>
+                  </div>
+               ))}
+            </div>
+         </div>
+
+         {/* MAP AREA */}
+         <div className="flex-1 relative">
+            <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', background: '#0f172a' }}>
+               <LayersControl position="topright">
+                  <LayersControl.BaseLayer name="Satélite (Esri)">
+                     <TileLayer
+                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+                     />
+                  </LayersControl.BaseLayer>
+                  <LayersControl.BaseLayer checked name="Modo Escuro (Dark)">
+                     <TileLayer
+                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                        attribution="&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/attributions'>CARTO</a>"
+                     />
+                  </LayersControl.BaseLayer>
+                  <LayersControl.BaseLayer name="Mapa de Ruas (Light)">
+                     <TileLayer
+                        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                        attribution="&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/attributions'>CARTO</a>"
+                     />
+                  </LayersControl.BaseLayer>
+               </LayersControl>
+
+               <MapUpdater center={viewMode === 'LIVE' ? (selectedAssetId && selectedAsset?.coordinates?.lat ? [selectedAsset.coordinates.lat, selectedAsset.coordinates.lng] : mapCenter) : (currentHistoryPoint ? [currentHistoryPoint.lat, currentHistoryPoint.lng] : mapCenter)} />
+
+               {viewMode === 'LIVE' ? (
+                  validAssets.map(asset => (
+                     <Marker key={asset.id} position={[asset.coordinates!.lat, asset.coordinates!.lng]} icon={createVehicleIcon(asset.code, asset.status, selectedAssetId === asset.id)}
+                        eventHandlers={{ click: () => { setSelectedAssetId(asset.id); setMapCenter([asset.coordinates!.lat, asset.coordinates!.lng]); } }}>
+                        <Popup><b className="text-slate-900">{asset.name}</b></Popup>
+                     </Marker>
+                  ))
+               ) : (
+                  <>
+                     {historyPoints.length > 0 && <Polyline positions={historyPolyline} color="#3b82f6" weight={3} opacity={0.7} />}
+                     {historyPoints.map((p, i) => p.event && (
+                        <Marker key={i} position={[p.lat, p.lng]} icon={createEventIcon(p.event)}>
+                           <Popup>{p.event} at {new Date(p.timestamp).toLocaleTimeString()}</Popup>
+                        </Marker>
+                     ))}
+                     {currentHistoryPoint && (
+                        <Marker position={[currentHistoryPoint.lat, currentHistoryPoint.lng]} icon={createVehicleIcon(selectedAsset?.code || '?', AssetStatus.OPERATING, true)} zIndexOffset={100} />
+                     )}
+                  </>
+               )}
+            </MapContainer>
+
+            {/* OVERLAYS */}
+            {viewMode === 'HISTORY' && historyPoints.length > 0 && (
+               <div className="absolute bottom-6 left-6 right-6 bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-xl flex items-center gap-4 z-[1000]">
+                  <button onClick={() => setIsPlaying(!isPlaying)} className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center hover:bg-blue-500">
+                     {isPlaying ? <Pause fill="white" /> : <Play fill="white" className="ml-1" />}
+                  </button>
+                  <div className="flex-1">
+                     <input type="range" min={0} max={historyPoints.length - 1} value={playbackIndex}
+                        onChange={e => { setPlaybackIndex(Number(e.target.value)); setIsPlaying(false); }}
+                        className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                     />
+                     <div className="flex justify-between text-xs text-slate-400 mt-1">
+                        <span>{new Date(historyPoints[0].timestamp).toLocaleTimeString()}</span>
+                        <span className="text-white font-bold">{new Date(currentHistoryPoint?.timestamp).toLocaleTimeString()}</span>
+                        <span>{new Date(historyPoints[historyPoints.length - 1].timestamp).toLocaleTimeString()}</span>
+                     </div>
+                  </div>
+                  <div className="text-right">
+                     <div className="text-xs text-slate-400">Velocidade</div>
+                     <div className="font-mono font-bold text-lg">{currentHistoryPoint?.speed || 0} km/h</div>
+                  </div>
+               </div>
             )}
 
-            {/* Floating Detail Card (LIVE) */}
+            {/* Live Card Info */}
             {viewMode === 'LIVE' && selectedAsset && (
-               <div className="absolute top-6 right-6 w-96 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-3xl p-6 shadow-2xl animate-in slide-in-from-right-4 z-30">
-                  <div className="flex justify-between items-start mb-6">
-                     <div>
-                        <h3 className="text-xl font-black text-white">{selectedAsset.name}</h3>
-                        <p className="text-sm font-bold text-slate-500">{selectedAsset.id} • {selectedAsset.telemetry?.deviceModel}</p>
-                     </div>
-                     <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Última Atualização</span>
-                        <span className="text-xs font-mono text-emerald-400 font-bold bg-emerald-400/10 px-2 py-1 rounded">
-                           {selectedAsset.telemetry?.lastUpdate.split(' ')[1]}
-                        </span>
-                     </div>
+               <div className="absolute top-6 right-6 w-72 bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-xl z-[1000] shadow-2xl">
+                  <h3 className="font-bold text-white mb-4">{selectedAsset.name}</h3>
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                     <div className="bg-slate-800 p-2 rounded"><span className="text-[10px] block text-slate-400">Velocidade</span><span className="font-mono text-lg">{selectedAsset.telemetry?.speed} km/h</span></div>
+                     <div className="bg-slate-800 p-2 rounded"><span className="text-[10px] block text-slate-400">Voltagem</span><span className="font-mono text-lg">{selectedAsset.telemetry?.voltage} V</span></div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                     <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                        <div className="flex items-center gap-2 mb-1">
-                           <Zap size={14} className="text-yellow-400" />
-                           <span className="text-[10px] uppercase font-bold text-slate-400">Voltagem</span>
-                        </div>
-                        <p className="text-lg font-black text-white">{selectedAsset.telemetry?.voltage} V</p>
-                     </div>
-                     <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                        <div className="flex items-center gap-2 mb-1">
-                           <Battery size={14} className={selectedAsset.telemetry?.batteryLevel && selectedAsset.telemetry.batteryLevel < 30 ? 'text-red-400' : 'text-emerald-400'} />
-                           <span className="text-[10px] uppercase font-bold text-slate-400">Bateria Int.</span>
-                        </div>
-                        <p className="text-lg font-black text-white">{selectedAsset.telemetry?.batteryLevel}%</p>
-                     </div>
-                     <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                        <div className="flex items-center gap-2 mb-1">
-                           <Gauge size={14} className="text-blue-400" />
-                           <span className="text-[10px] uppercase font-bold text-slate-400">Velocidade</span>
-                        </div>
-                        <p className="text-lg font-black text-white">{selectedAsset.telemetry?.speed} km/h</p>
-                     </div>
-                     <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700">
-                        <div className="flex items-center gap-2 mb-1">
-                           <Signal size={14} className="text-purple-400" />
-                           <span className="text-[10px] uppercase font-bold text-slate-400">Satélites</span>
-                        </div>
-                        <p className="text-lg font-black text-white">{selectedAsset.telemetry?.satelliteCount}</p>
-                     </div>
-                  </div>
-
-                  <div className="space-y-4">
-                     <div className="flex dark:bg-slate-950 p-3 rounded-xl border border-slate-800 gap-3">
-                        <MapPin className="text-slate-400 shrink-0 mt-0.5" size={16} />
-                        <div>
-                           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Localização Atual</p>
-                           <p className="text-xs font-bold text-slate-200 leading-relaxed">
-                              {selectedAsset.telemetry?.address}
-                           </p>
-                        </div>
-                     </div>
-
-                     <div className="flex gap-2">
-                        <button className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2">
-                           <Locate size={14} /> Rastrear Agora
-                        </button>
-                        <button
-                           onClick={() => setViewMode('HISTORY')}
-                           className="px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold uppercase transition-colors"
-                        >
-                           Histórico
-                        </button>
-                     </div>
-                  </div>
+                  <div className="text-[10px] text-slate-500 text-right">{selectedAsset.telemetry?.lastUpdate}</div>
                </div>
             )}
          </div>
-
-         {/* History Sidebar (Right Side) */}
-         {viewMode === 'HISTORY' && (
-            <div className="w-[400px] border-l border-slate-800 flex flex-col bg-white z-20 shadow-2xl animate-in slide-in-from-right">
-               {/* History Header */}
-               <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                  <div className="flex items-center gap-3">
-                     <button onClick={() => setViewMode('LIVE')} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
-                        <ChevronLeft size={20} className="text-gray-600" />
-                     </button>
-                     <div>
-                        <h2 className="text-sm font-black text-gray-800 uppercase tracking-wide">Histórico</h2>
-                        <p className="text-xs text-gray-500 font-bold">{selectedAsset?.name}</p>
-                     </div>
-                  </div>
-                  <div className="flex gap-1">
-                     <button className="p-2 text-gray-600 hover:bg-gray-200 rounded"><RefreshCw size={16} /></button>
-                     <button className="p-2 text-gray-600 hover:bg-gray-200 rounded"><layers size={16} /></button>
-                  </div>
-               </div>
-
-               {/* Timeline Controls */}
-               <div className="p-4 bg-gray-100 border-b border-gray-200 space-y-3">
-                  <div className="flex items-center gap-4 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
-                     <button
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center text-white transition-all ${isPlaying ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'}`}
-                     >
-                        {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-1" />}
-                     </button>
-                     <div className="flex-1">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Playback</p>
-                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                           <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${(playbackIndex / historyPoints.length) * 100}%` }}></div>
-                        </div>
-                     </div>
-                     <span className="text-xs font-mono font-bold text-gray-600">{playbackIndex}/{historyPoints.length}</span>
-                  </div>
-               </div>
-
-               {/* Events List Table */}
-               <div className="flex-1 overflow-y-auto bg-white">
-                  <table className="w-full text-left">
-                     <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
-                        <tr className="text-[10px] uppercase font-black text-gray-500 tracking-wider">
-                           <th className="px-4 py-3">Data/Hora</th>
-                           <th className="px-2 py-3 text-center">Vel</th>
-                           <th className="px-2 py-3 text-center">Ignição</th>
-                           <th className="px-2 py-3 text-center">Evento</th>
-                        </tr>
-                     </thead>
-                     <tbody className="divide-y divide-gray-100">
-                        {historyPoints.map((pt, idx) => (
-                           <tr
-                              key={pt.id}
-                              onClick={() => setPlaybackIndex(idx)}
-                              className={`cursor-pointer transition-colors hover:bg-blue-50 ${idx === playbackIndex ? 'bg-blue-100 ring-2 ring-inset ring-blue-500' : ''}`}
-                           >
-                              <td className="px-4 py-3 text-xs font-mono font-medium text-gray-700">{pt.timestamp}</td>
-                              <td className="px-2 py-3 text-center text-xs font-bold text-gray-800">{pt.speed} km/h</td>
-                              <td className="px-2 py-3 text-center">
-                                 <div className="flex justify-center">
-                                    {pt.ignition ?
-                                       <div className="w-6 h-6 rounded bg-emerald-100 flex items-center justify-center"><Zap size={12} className="text-emerald-600" fill="currentColor" /></div> :
-                                       <div className="w-6 h-6 rounded bg-gray-200 flex items-center justify-center"><Zap size={12} className="text-gray-400" /></div>
-                                    }
-                                 </div>
-                              </td>
-                              <td className="px-2 py-3 text-center">
-                                 {pt.event && (
-                                    <div className="flex justify-center tooltip" title={pt.event}>
-                                       {pt.event === 'STOP' && <div className="w-6 h-6 rounded bg-red-100 flex items-center justify-center"><OctagonPause size={12} className="text-red-600" /></div>}
-                                       {pt.event === 'SPEEDING' && <div className="w-6 h-6 rounded bg-amber-100 flex items-center justify-center"><AlertTriangle size={12} className="text-amber-600" /></div>}
-                                    </div>
-                                 )}
-                              </td>
-                           </tr>
-                        ))}
-                     </tbody>
-                  </table>
-               </div>
-            </div>
-         )}
       </div>
    );
 };
-
-// Start Icon helper
-const OctagonPause = ({ size, className }: { size: number, className?: string }) => (
-   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" />
-      <rect x="9" y="8" width="2" height="8" fill="currentColor" stroke="none" />
-      <rect x="13" y="8" width="2" height="8" fill="currentColor" stroke="none" />
-   </svg>
-);
 
 export default MapDigital;

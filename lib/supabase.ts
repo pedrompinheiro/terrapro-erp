@@ -5,10 +5,9 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('Missing Supabase environment variables. Please check .env.local');
+    console.warn('⚠️ Missing Supabase environment variables! Check your .env file.');
+    console.warn('⚠️ Using placeholder client. Database calls WILL FAIL.');
 }
-
-console.log('🔗 [lib/supabase] Conectando em:', supabaseUrl);
 
 export const supabase = createClient(
     supabaseUrl || 'https://placeholder.supabase.co',

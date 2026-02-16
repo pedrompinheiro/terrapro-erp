@@ -1,77 +1,327 @@
 
-import React, { useState } from 'react';
-import { MessageSquare, Users, CheckCircle2, Zap, AlertTriangle, ScanLine, Smartphone, Send, Plus, Settings2, Bell, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MessageSquare, Users, CheckCircle2, Zap, AlertTriangle, ScanLine, Smartphone, Send, Plus, Settings2, Bell, RefreshCw, Trash2, Globe, Server, RotateCw } from 'lucide-react';
 import Modal from '../components/Modal';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../lib/supabase';
+import { evolutionService } from '../services/evolutionService';
+
+// Interfaces
+interface WhatsAppGroup {
+    id: string;
+    name: string;
+    members_count: number;
+    is_active: boolean;
+}
+
+interface WhatsAppMessage {
+    id: string;
+    sender_name: string;
+    content: string;
+    received_at: string;
+    ai_intent?: string;
+    ai_asset?: string;
+    ai_action?: string;
+    status: 'PENDING' | 'PROCESSED' | 'IGNORED';
+    group_id?: string;
+    group_name?: string;
+}
+
+interface WhatsAppRule {
+    id: string;
+    name: string;
+    trigger_condition: string;
+    action_description: string;
+    is_active: boolean;
+}
+
+interface WhatsAppCampaign {
+    id: string;
+    name: string;
+    target_audience: string;
+    status: 'DRAFT' | 'SCHEDULED' | 'SENT';
+    sent_count: number;
+    total_count: number;
+}
 
 const WhatsAppAutomation: React.FC = () => {
-    const [status, setStatus] = useState<'DISCONNECTED' | 'CONNECTED'>('CONNECTED');
+    const [status, setStatus] = useState<'DISCONNECTED' | 'CONNECTED' | 'Connecting'>('DISCONNECTED');
+    const [qrCode, setQrCode] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'STREAM' | 'CAMPAIGNS' | 'RULES'>('STREAM');
+    const [showApiInfo, setShowApiInfo] = useState(false);
+    const [connectionLog, setConnectionLog] = useState<string[]>([]);
+    const [connectingStartTime, setConnectingStartTime] = useState<number | null>(null);
+
+    // Modais
     const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
+    const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
 
-    // Mock Data for demonstration
-    const groups = [
-        { id: 1, name: '🚜 Manutenção Campo', members: 14, active: true },
-        { id: 2, name: '💰 Financeiro Urgente', members: 5, active: true },
-        { id: 3, name: '🚛 Logística Dourados', members: 8, active: false },
-    ];
+    // Forms
+    const [campaignForm, setCampaignForm] = useState({ name: '', target: 'ALL_CLIENTS', message: '' });
+    const [ruleForm, setRuleForm] = useState({ name: '', trigger: '', action: '' });
 
-    const messageLog = [
-        {
-            id: 101,
-            group: 'Manutenção Campo',
-            user: 'João Mecânico',
-            time: '10:42',
-            text: 'A escavadeira 04 quebrou a mangueira hidráulica no setor B, preciso de uma urgente.',
-            aiAnalysis: {
-                intent: 'MAINTENANCE_REQUEST',
-                asset: 'Escavadeira 04 (EXC-04)',
-                urgency: 'HIGH',
-                action: 'Criar O.S. Corretiva'
-            },
-            status: 'PROCESSED'
-        },
-        {
-            id: 102,
-            group: 'Financeiro Urgente',
-            user: 'Maria Compras',
-            time: '10:45',
-            text: 'NF-e 4590 da Peças & Cia chegou para pagamento hoje.',
-            aiAnalysis: {
-                intent: 'PAYMENT_ALERT',
-                document: 'NF-e 4590',
-                urgency: 'MEDIUM',
-                action: 'Agendar Pagamento'
-            },
-            status: 'PENDING'
+    // Helper para adicionar log
+    const addLog = (message: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setConnectionLog(prev => [`[${timestamp}] ${message}`, ...prev].slice(0, 10));
+        console.log(message);
+    };
+
+    // --- Connection Logic with Evolution API ---
+
+    const checkConnection = async () => {
+        try {
+            const state = await evolutionService.getConnectionState();
+
+            if (state === 'open') {
+                setStatus('CONNECTED');
+                setQrCode(null);
+                setConnectingStartTime(null);
+                updateSystemStatus('CONNECTED');
+                addLog('✅ WhatsApp conectado com sucesso!');
+            } else if (state === 'connecting') {
+                setStatus('Connecting');
+
+                // Detectar se está travado há muito tempo
+                if (!connectingStartTime) {
+                    setConnectingStartTime(Date.now());
+                } else {
+                    const elapsed = Date.now() - connectingStartTime;
+                    if (elapsed > 45000) { // 45 segundos
+                        addLog('⚠️ Conexão travada há mais de 45s. Use o botão "Reset Forçado".');
+                    }
+                }
+
+                // Tentar buscar QR Code se estiver conectando
+                fetchQrCode();
+            } else {
+                setStatus('DISCONNECTED');
+                setConnectingStartTime(null);
+                updateSystemStatus('DISCONNECTED');
+            }
+        } catch (error) {
+            console.error("API Error", error);
+            setStatus('DISCONNECTED');
+            addLog('❌ Erro ao verificar conexão');
         }
-    ];
+    };
 
-    const rules = [
-        { id: 1, name: 'Auto-Responder Boleto', trigger: 'Mensagem contém "Boleto"', action: 'Enviar Link do Portal', active: true },
-        { id: 2, name: 'Alerta de Parada', trigger: 'Sistema detecta falha > 30min', action: 'Notificar Grupo Manutenção', active: true },
-        { id: 3, name: 'Lembrete Vencimento', trigger: '2 dias antes do vencimento', action: 'Enviar msg p/ Cliente', active: false },
-    ];
+    // Check on load and every 10s
+    useEffect(() => {
+        checkConnection();
+        const interval = setInterval(checkConnection, 10000);
+        return () => clearInterval(interval);
+    }, [connectingStartTime]);
 
-    const campaigns = [
-        { id: 1, name: 'Promoção Peças Agrícolas', target: 'Lista Clientes VIP', status: 'SENT', sent: 150, opened: 120 },
-        { id: 2, name: 'Aviso Feriado', target: 'Todos Clientes', status: 'SCHEDULED', sent: 0, opened: 0 },
-    ];
+    const fetchQrCode = async () => {
+        try {
+            const data = await evolutionService.connectInstance();
+
+            if (data && (data.base64 || data.qrcode?.base64)) {
+                setQrCode(data.base64 || data.qrcode.base64);
+                addLog('📱 QR Code gerado! Escaneie agora.');
+            } else if (data?.count === 0) {
+                // Silencioso - não loga toda vez
+            }
+        } catch (e) {
+            console.error("Erro ao buscar QR:", e);
+        }
+    };
+
+    const handleConnect = async () => {
+        setStatus('Connecting');
+        setConnectingStartTime(Date.now());
+        addLog('🔄 Iniciando conexão...');
+
+        try {
+            // 1. Tenta criar (se ja existir, ignora erro ou retorna dados)
+            try {
+                await evolutionService.createInstance();
+                addLog('✅ Instância criada');
+            } catch (e) {
+                addLog('ℹ️ Instância já existe, conectando...');
+            }
+
+            // 2. Loop de tentativas para pegar o QR Code (max 5x)
+            let attempts = 0;
+            const tryGetQr = async () => {
+                attempts++;
+                addLog(`🔍 Tentativa ${attempts}/5 de obter QR Code...`);
+                const data = await evolutionService.connectInstance();
+
+                if (data && (data.base64 || data.qrcode?.base64)) {
+                    setQrCode(data.base64 || data.qrcode.base64);
+                    addLog('✅ QR Code obtido!');
+                } else {
+                    if (attempts < 5) {
+                        setTimeout(tryGetQr, 2000);
+                    } else {
+                        addLog('❌ Não foi possível obter QR Code após 5 tentativas');
+                        setStatus('DISCONNECTED');
+                    }
+                }
+            };
+
+            tryGetQr();
+
+        } catch (error) {
+            addLog('❌ Erro ao conectar. Verifique se o Docker está rodando.');
+            setStatus('DISCONNECTED');
+        }
+    };
+
+    const handleForceReset = async () => {
+        if (!confirm('⚠️ Isso vai deletar e recriar a instância do zero. Continuar?')) return;
+
+        setStatus('Connecting');
+        setQrCode(null);
+        setConnectingStartTime(Date.now());
+        addLog('🔄 RESET FORÇADO iniciado...');
+
+        try {
+            const result = await evolutionService.resetInstance();
+
+            if (result && (result.base64 || result.qrcode?.base64)) {
+                setQrCode(result.base64 || result.qrcode.base64);
+                addLog('✅ Reset concluído! QR Code gerado.');
+            } else {
+                addLog('⚠️ Reset concluído, mas QR Code não foi gerado imediatamente. Aguarde...');
+                // Tentar buscar QR Code após alguns segundos
+                setTimeout(() => fetchQrCode(), 3000);
+            }
+        } catch (error) {
+            addLog('❌ Erro no reset forçado');
+            setStatus('DISCONNECTED');
+        }
+    };
+
+    const handleDisconnect = async () => {
+        if (!confirm("Desconectar o WhatsApp?")) return;
+        addLog('🔌 Desconectando...');
+        await evolutionService.logoutInstance();
+        setStatus('DISCONNECTED');
+        setQrCode(null);
+        setConnectingStartTime(null);
+        updateSystemStatus('DISCONNECTED');
+        addLog('✅ Desconectado');
+    };
+
+    const updateSystemStatus = async (newStatus: 'CONNECTED' | 'DISCONNECTED') => {
+        await supabase.from('system_integrations').upsert({
+            service_name: 'WHATSAPP',
+            status: newStatus,
+            connected_at: newStatus === 'CONNECTED' ? new Date().toISOString() : null
+        }, { onConflict: 'service_name' });
+    };
+
+    // --- Existing Logic ---
+
+    const { data: groups = [], refetch: refetchGroups } = useQuery({
+        queryKey: ['whatsapp_groups'],
+        queryFn: async () => {
+            const { data } = await supabase.from('whatsapp_groups').select('*').order('name');
+            return data as WhatsAppGroup[] || [];
+        }
+    });
+
+    const { data: messages = [], refetch: refetchMessages } = useQuery({
+        queryKey: ['whatsapp_messages'],
+        queryFn: async () => {
+            const { data } = await supabase
+                .from('whatsapp_messages')
+                .select('*')
+                .order('received_at', { ascending: false })
+                .limit(20);
+            return data as WhatsAppMessage[] || [];
+        },
+        refetchInterval: 5000
+    });
+
+    const { data: rules = [], refetch: refetchRules } = useQuery({
+        queryKey: ['whatsapp_rules'],
+        queryFn: async () => {
+            const { data } = await supabase.from('whatsapp_rules').select('*').order('created_at');
+            return data as WhatsAppRule[] || [];
+        }
+    });
+
+    const { data: campaigns = [], refetch: refetchCampaigns } = useQuery({
+        queryKey: ['whatsapp_campaigns'],
+        queryFn: async () => {
+            const { data } = await supabase.from('whatsapp_campaigns').select('*').order('created_at', { ascending: false });
+            return data as WhatsAppCampaign[] || [];
+        }
+    });
+
+    // --- Actions ---
+
+    const handleCreateRule = async () => {
+        if (!ruleForm.name || !ruleForm.trigger) return alert("Preencha Nome e Gatilho");
+        await supabase.from('whatsapp_rules').insert({
+            name: ruleForm.name,
+            trigger_condition: ruleForm.trigger,
+            action_description: ruleForm.action,
+            is_active: true
+        });
+        setRuleForm({ name: '', trigger: '', action: '' }); // Reset
+        setIsRuleModalOpen(false);
+        refetchRules();
+    };
+
+    const handleToggleRule = async (id: string, currentStatus: boolean) => {
+        await supabase.from('whatsapp_rules').update({ is_active: !currentStatus }).eq('id', id);
+        refetchRules();
+    };
+
+    const handleDeleteRule = async (id: string) => {
+        if (!confirm("Excluir regra?")) return;
+        await supabase.from('whatsapp_rules').delete().eq('id', id);
+        refetchRules();
+    };
+
+    const handleCreateCampaign = async () => {
+        if (!campaignForm.name || !campaignForm.message) return alert("Preencha Nome e Mensagem");
+
+        // Simula criação
+        await supabase.from('whatsapp_campaigns').insert({
+            name: campaignForm.name,
+            target_audience: campaignForm.target,
+            message_content: campaignForm.message,
+            status: 'SCHEDULED',
+            sent_count: 0,
+            total_count: 0
+        });
+
+        setCampaignForm({ name: '', target: 'ALL_CLIENTS', message: '' });
+        setIsCampaignModalOpen(false);
+        refetchCampaigns();
+        alert("Campanha Agendada com Sucesso! 🚀");
+    };
 
     return (
-        <div className="p-8 space-y-8 max-w-[1600px] mx-auto">
+        <div className="p-8 space-y-8 max-w-[1600px] mx-auto custom-scrollbar pb-24">
             <div className="flex justify-between items-end">
                 <div>
                     <h2 className="text-3xl font-black text-white tracking-tight">Automação WhatsApp & AI</h2>
-                    <p className="text-slate-500 mt-1">Monitore grupos, crie regras e envie campanhas em massa.</p>
+                    <p className="text-slate-500 mt-1">Status da API Local: <span className="font-mono text-emerald-500">http://localhost:8080</span></p>
                 </div>
                 <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => checkConnection()}
+                        className="text-slate-500 hover:text-white p-2"
+                        title="Verificar Conexão Manualmente"
+                    >
+                        <RotateCw size={18} />
+                    </button>
+
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${status === 'CONNECTED'
                         ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
-                        : 'bg-red-500/10 border-red-500/20 text-red-500'
+                        : status === 'Connecting' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+                            : 'bg-red-500/10 border-red-500/20 text-red-500'
                         }`}>
                         <div className={`w-2.5 h-2.5 rounded-full ${status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                         <span className="text-xs font-black uppercase tracking-widest">
-                            {status === 'CONNECTED' ? 'Sistema Online' : 'Desconectado'}
+                            {status === 'CONNECTED' ? 'Robô Online' : status === 'Connecting' ? 'Conectando...' : 'Robô Offline'}
                         </span>
                     </div>
                 </div>
@@ -100,22 +350,52 @@ const WhatsAppAutomation: React.FC = () => {
                                         <CheckCircle2 size={40} className="text-emerald-500" />
                                     </div>
                                     <h4 className="text-xl font-bold text-white">WhatsApp Conectado</h4>
-                                    <p className="text-slate-500 text-sm mt-2">Sincronizado com número <span className="text-emerald-500 font-mono">(67) 999xx-xxxx</span></p>
-                                    <button onClick={() => setStatus('DISCONNECTED')} className="mt-6 text-xs text-red-400 font-bold hover:text-red-300 uppercase tracking-widest border border-red-900/30 px-4 py-2 rounded-lg bg-red-950/20">
-                                        Desconectar
+                                    <p className="text-slate-500 text-sm mt-2">Instância: <span className="font-mono text-emerald-500">terrapro_bot</span></p>
+                                    <button onClick={handleDisconnect} className="mt-6 text-xs text-red-400 font-bold hover:text-red-300 uppercase tracking-widest border border-red-900/30 px-4 py-2 rounded-lg bg-red-950/20">
+                                        Desconectar Robô
                                     </button>
                                 </div>
                             ) : (
                                 <div className="text-center py-6">
-                                    <div className="bg-white p-4 w-48 h-48 mx-auto rounded-xl">
-                                        <div className="w-full h-full bg-slate-900 flex items-center justify-center">
-                                            <ScanLine size={40} className="text-slate-600 animate-pulse" />
+                                    {qrCode ? (
+                                        <div className="bg-white p-2 mx-auto w-fit rounded-xl mb-4">
+                                            <img src={qrCode} alt="QR Code" className="w-48 h-48" />
                                         </div>
+                                    ) : (
+                                        <div className="bg-white p-4 w-48 h-48 mx-auto rounded-xl flex items-center justify-center">
+                                            <ScanLine size={40} className="text-slate-600" />
+                                        </div>
+                                    )}
+
+                                    <p className="text-slate-400 text-sm mt-4 font-bold">
+                                        {qrCode ? "Escaneie agora com seu celular!" : "O robô está desconectado."}
+                                    </p>
+
+                                    <div className="flex gap-2 mt-4 justify-center">
+                                        {!qrCode && (
+                                            <button onClick={handleConnect} className="bg-[#007a33] text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-[#006028] transition-all flex items-center gap-2">
+                                                <Zap size={16} /> Gerar QR Code
+                                            </button>
+                                        )}
+
+                                        {status === 'Connecting' && connectingStartTime && (Date.now() - connectingStartTime > 30000) && (
+                                            <button onClick={handleForceReset} className="bg-orange-600 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-orange-500 transition-all flex items-center gap-2">
+                                                <RefreshCw size={16} /> Reset Forçado
+                                            </button>
+                                        )}
                                     </div>
-                                    <p className="text-slate-400 text-sm mt-4 font-bold">Escaneie o QR Code para conectar</p>
-                                    <button onClick={() => setStatus('CONNECTED')} className="mt-4 bg-[#007a33] text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-[#006028] transition-all">
-                                        Simular Conexão
-                                    </button>
+
+                                    {/* Painel de Logs */}
+                                    {connectionLog.length > 0 && (
+                                        <div className="mt-6 bg-slate-950 border border-slate-800 rounded-xl p-4 max-h-48 overflow-y-auto">
+                                            <h5 className="text-xs font-bold text-slate-500 uppercase mb-2">Log de Conexão</h5>
+                                            <div className="space-y-1 text-left">
+                                                {connectionLog.map((log, idx) => (
+                                                    <p key={idx} className="text-xs font-mono text-slate-400">{log}</p>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -123,7 +403,7 @@ const WhatsAppAutomation: React.FC = () => {
                         <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl">
                             <div className="flex justify-between items-center mb-6">
                                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">Grupos Monitorados</h3>
-                                <span className="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded-md font-bold">3 Ativos</span>
+                                <span className="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded-md font-bold">{groups.filter(g => g.is_active).length} Ativos</span>
                             </div>
                             <div className="space-y-3">
                                 {groups.map(group => (
@@ -134,12 +414,13 @@ const WhatsAppAutomation: React.FC = () => {
                                             </div>
                                             <div>
                                                 <p className="text-sm font-bold text-white">{group.name}</p>
-                                                <p className="text-[10px] text-slate-500">{group.members} membros</p>
+                                                <p className="text-[10px] text-slate-500">{group.members_count} membros</p>
                                             </div>
                                         </div>
-                                        <div className={`w-2 h-2 rounded-full ${group.active ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                                        <div className={`w-2 h-2 rounded-full ${group.is_active ? 'bg-emerald-500' : 'bg-slate-700'}`} />
                                     </div>
                                 ))}
+                                {groups.length === 0 && <p className="text-slate-500 text-sm italic">Nenhum grupo encontrado.</p>}
                             </div>
                         </div>
                     </div>
@@ -162,8 +443,14 @@ const WhatsAppAutomation: React.FC = () => {
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                                {messageLog.map((log) => (
-                                    <div key={log.id} className="relative pl-8 before:absolute before:left-3.5 before:top-0 before:bottom-0 before:w-px before:bg-slate-800 last:before:bottom-auto last:before:h-full">
+                                {messages.length === 0 && (
+                                    <div className="text-center py-20 text-slate-500">
+                                        <MessageSquare size={48} className="mx-auto mb-4 opacity-20" />
+                                        <p>Aguardando novas mensagens...</p>
+                                    </div>
+                                )}
+                                {messages.map((msg) => (
+                                    <div key={msg.id} className="relative pl-8 before:absolute before:left-3.5 before:top-0 before:bottom-0 before:w-px before:bg-slate-800 last:before:bottom-auto last:before:h-full">
                                         <div className="absolute left-0 top-0 w-7 h-7 bg-slate-900 border border-slate-700 rounded-full flex items-center justify-center">
                                             <MessageSquare size={14} className="text-slate-500" />
                                         </div>
@@ -172,52 +459,51 @@ const WhatsAppAutomation: React.FC = () => {
                                             <div className="flex justify-between items-start mb-3">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">Novo</span>
-                                                    <span className="text-xs font-bold text-slate-400">{log.time}</span>
+                                                    <span className="text-xs font-bold text-slate-400">{new Date(msg.received_at).toLocaleTimeString().slice(0, 5)}</span>
                                                 </div>
-                                                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">{log.group}</span>
+                                                {/* Se tivermos linkado group_id futuramente, exibimos nome do grupo */}
+                                                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Grupo Monitorado</span>
                                             </div>
 
                                             <div className="flex gap-3 mb-4">
-                                                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400 shrink-0">
-                                                    {log.user.charAt(0)}
+                                                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400 shrink-0 uppercase">
+                                                    {msg.sender_name?.charAt(0) || '?'}
                                                 </div>
-                                                <div className="bg-slate-900 p-3 rounded-xl rounded-tl-none border border-slate-800/50">
-                                                    <p className="text-sm text-slate-300 italic">"{log.text}"</p>
+                                                <div className="bg-slate-900 p-3 rounded-xl rounded-tl-none border border-slate-800/50 w-full">
+                                                    <p className="text-sm font-bold text-slate-400 mb-1">{msg.sender_name}</p>
+                                                    <p className="text-sm text-slate-300 italic">"{msg.content}"</p>
                                                 </div>
                                             </div>
 
-                                            <div className="bg-[#007a33]/10 border border-[#007a33]/20 rounded-xl p-4 ml-11">
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <Zap size={14} className="text-[#007a33]" />
-                                                    <span className="text-xs font-black text-[#007a33] uppercase tracking-widest">Análise da IA</span>
+                                            {/* AI Analysis Block - Only shows if AI data exists */}
+                                            {(msg.ai_intent || msg.ai_asset) && (
+                                                <div className="bg-[#007a33]/10 border border-[#007a33]/20 rounded-xl p-4 ml-11">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <Zap size={14} className="text-[#007a33]" />
+                                                        <span className="text-xs font-black text-[#007a33] uppercase tracking-widest">Análise da IA</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-4 mb-4">
+                                                        <div>
+                                                            <p className="text-[10px] uppercase text-slate-500 font-bold">Intenção Detectada</p>
+                                                            <p className="text-sm font-bold text-white">{msg.ai_intent || 'Desconhecida'}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-[10px] uppercase text-slate-500 font-bold">Alvo / Ativo</p>
+                                                            <p className="text-sm font-bold text-white">{msg.ai_asset || '-'}</p>
+                                                        </div>
+                                                    </div>
+                                                    {msg.status === 'PENDING' && (
+                                                        <div className="flex gap-3 mt-4 pt-4 border-t border-[#007a33]/20">
+                                                            <button className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors">
+                                                                Aprovar: {msg.ai_action || 'Processar'}
+                                                            </button>
+                                                            <button className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors">
+                                                                Ignorar
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-4 mb-4">
-                                                    <div>
-                                                        <p className="text-[10px] uppercase text-slate-500 font-bold">Intenção Detectada</p>
-                                                        <p className="text-sm font-bold text-white">{log.aiAnalysis.intent}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-[10px] uppercase text-slate-500 font-bold">Alvo / Ativo</p>
-                                                        <p className="text-sm font-bold text-white">{log.aiAnalysis.asset || log.aiAnalysis.document}</p>
-                                                    </div>
-                                                </div>
-                                                {log.status === 'PENDING' && (
-                                                    <div className="flex gap-3 mt-4 pt-4 border-t border-[#007a33]/20">
-                                                        <button className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors">
-                                                            Aprovar: {log.aiAnalysis.action}
-                                                        </button>
-                                                        <button className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors">
-                                                            Ignorar
-                                                        </button>
-                                                    </div>
-                                                )}
-                                                {log.status === 'PROCESSED' && (
-                                                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-[#007a33]/20 text-[#007a33]">
-                                                        <CheckCircle2 size={16} />
-                                                        <span className="text-xs font-bold uppercase tracking-wide">Tarefa Criada Automáticamente</span>
-                                                    </div>
-                                                )}
-                                            </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -234,7 +520,10 @@ const WhatsAppAutomation: React.FC = () => {
                             <h3 className="text-lg font-bold text-white">Regras de Resposta Automática</h3>
                             <p className="text-slate-500 text-sm">Configure gatilhos para que o robô responda sozinho.</p>
                         </div>
-                        <button className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
+                        <button
+                            onClick={() => setIsRuleModalOpen(true)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"
+                        >
                             <Plus size={18} /> Nova Regra
                         </button>
                     </div>
@@ -242,29 +531,39 @@ const WhatsAppAutomation: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {rules.map(rule => (
                             <div key={rule.id} className="bg-slate-900 border border-slate-800 p-6 rounded-3xl hover:border-blue-500/50 transition-colors relative group">
-                                <div className="absolute top-4 right-4 text-slate-600 group-hover:text-blue-500"><Settings2 size={18} /></div>
+                                <button
+                                    onClick={() => handleDeleteRule(rule.id)}
+                                    className="absolute top-4 right-4 text-slate-600 hover:text-red-500 transition-colors"
+                                    title="Excluir Regra"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
                                 <div className="mb-4 bg-blue-500/10 w-12 h-12 rounded-xl flex items-center justify-center text-blue-500"><Zap size={24} /></div>
                                 <h4 className="font-bold text-white mb-2">{rule.name}</h4>
                                 <div className="space-y-3">
                                     <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                                         <p className="text-[10px] font-bold text-slate-500 uppercase">Gatilho (Se...)</p>
-                                        <p className="text-xs font-bold text-slate-300">{rule.trigger}</p>
+                                        <p className="text-xs font-bold text-slate-300">{rule.trigger_condition}</p>
                                     </div>
                                     <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                                         <p className="text-[10px] font-bold text-slate-500 uppercase">Ação (Então...)</p>
-                                        <p className="text-xs font-bold text-slate-300">{rule.action}</p>
+                                        <p className="text-xs font-bold text-slate-300">{rule.action_description}</p>
                                     </div>
                                 </div>
                                 <div className="mt-4 flex items-center justify-between">
-                                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${rule.active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700/50 text-slate-500'}`}>
-                                        {rule.active ? 'Ativa' : 'Inativa'}
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${rule.is_active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700/50 text-slate-500'}`}>
+                                        {rule.is_active ? 'Ativa' : 'Inativa'}
                                     </span>
-                                    <div className="w-10 h-5 bg-slate-700 rounded-full relative cursor-pointer">
-                                        <div className={`w-5 h-5 bg-white rounded-full absolute top-0 transition-all ${rule.active ? 'right-0 bg-emerald-500' : 'left-0'}`}></div>
+                                    <div
+                                        onClick={() => handleToggleRule(rule.id, rule.is_active)}
+                                        className="w-10 h-5 bg-slate-700 rounded-full relative cursor-pointer"
+                                    >
+                                        <div className={`w-5 h-5 bg-white rounded-full absolute top-0 transition-all ${rule.is_active ? 'right-0 bg-emerald-500' : 'left-0'}`}></div>
                                     </div>
                                 </div>
                             </div>
                         ))}
+                        {rules.length === 0 && <p className="text-slate-500 col-span-3 text-center italic">Nenhuma regra ativa.</p>}
                     </div>
                 </div>
             )}
@@ -296,9 +595,9 @@ const WhatsAppAutomation: React.FC = () => {
                                 {campaigns.map(cp => (
                                     <tr key={cp.id} className="hover:bg-slate-800/30 transition-colors">
                                         <td className="px-8 py-5 font-bold text-white">{cp.name}</td>
-                                        <td className="px-8 py-5 text-slate-400">{cp.target}</td>
+                                        <td className="px-8 py-5 text-slate-400">{cp.target_audience}</td>
                                         <td className="px-8 py-5 text-center font-mono">
-                                            {cp.sent} <span className="text-slate-600">/ {cp.sent + 20}</span>
+                                            {cp.sent_count} <span className="text-slate-600">/ {cp.total_count || '-'}</span>
                                         </td>
                                         <td className="px-8 py-5 text-center">
                                             <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${cp.status === 'SENT' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
@@ -310,36 +609,92 @@ const WhatsAppAutomation: React.FC = () => {
                                         </td>
                                     </tr>
                                 ))}
+                                {campaigns.length === 0 && (
+                                    <tr><td colSpan={5} className="px-8 py-12 text-center text-slate-500 italic">Nenhuma campanha criada.</td></tr>
+                                )}
                             </tbody>
                         </table>
                     </div>
                 </div>
             )}
 
+            {/* Modal Nova Campanha */}
             <Modal isOpen={isCampaignModalOpen} onClose={() => setIsCampaignModalOpen(false)} title="Nova Campanha de WhatsApp">
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Nome da Campanha</label>
-                        <input placeholder="Ex: Aviso de Férias Coletivas" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none" />
+                        <input
+                            value={campaignForm.name}
+                            onChange={e => setCampaignForm({ ...campaignForm, name: e.target.value })}
+                            placeholder="Ex: Aviso de Férias Coletivas"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none"
+                        />
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Público Alvo (Lista)</label>
-                        <select className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none">
-                            <option>Todos os Clientes</option>
-                            <option>Fornecedores Ativos</option>
-                            <option>Colaboradores (RH)</option>
+                        <select
+                            value={campaignForm.target}
+                            onChange={e => setCampaignForm({ ...campaignForm, target: e.target.value })}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none"
+                        >
+                            <option value="ALL_CLIENTS">Todos os Clientes</option>
+                            <option value="SUPPLIERS">Fornecedores Ativos</option>
+                            <option value="EMPLOYEES">Colaboradores (RH)</option>
                         </select>
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Mensagem</label>
-                        <textarea placeholder="Digite sua mensagem aqui..." className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none h-32 resize-none" />
+                        <textarea
+                            value={campaignForm.message}
+                            onChange={e => setCampaignForm({ ...campaignForm, message: e.target.value })}
+                            placeholder="Digite sua mensagem aqui..."
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none h-32 resize-none"
+                        />
                     </div>
-                    <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-400">Anexar Imagem / PDF</span>
-                        <button className="text-xs bg-slate-800 text-white px-3 py-1 rounded-lg hover:bg-slate-700">Escolher Arquivo</button>
-                    </div>
-                    <button onClick={() => setIsCampaignModalOpen(false)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 mt-2">
+                    <button
+                        onClick={handleCreateCampaign}
+                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 mt-2"
+                    >
                         <Send size={18} /> Disparar Agora
+                    </button>
+                </div>
+            </Modal>
+
+            {/* Modal Nova Regra */}
+            <Modal isOpen={isRuleModalOpen} onClose={() => setIsRuleModalOpen(false)} title="Nova Regra Automática">
+                <div className="space-y-4">
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Nome da Regra</label>
+                        <input
+                            value={ruleForm.name}
+                            onChange={e => setRuleForm({ ...ruleForm, name: e.target.value })}
+                            placeholder="Ex: Auto-resposta Boleto"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Gatilho (Quando acontecer...)</label>
+                        <input
+                            value={ruleForm.trigger}
+                            onChange={e => setRuleForm({ ...ruleForm, trigger: e.target.value })}
+                            placeholder="Ex: Mensagem contém 'preço'"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Ação (Fazer isso...)</label>
+                        <input
+                            value={ruleForm.action}
+                            onChange={e => setRuleForm({ ...ruleForm, action: e.target.value })}
+                            placeholder="Ex: Enviar tabela de preços PDF"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
+                        />
+                    </div>
+                    <button
+                        onClick={handleCreateRule}
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 mt-2"
+                    >
+                        <Plus size={18} /> Criar Regra
                     </button>
                 </div>
             </Modal>

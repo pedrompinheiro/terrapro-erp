@@ -110,13 +110,14 @@ export const MOCK_MAINTENANCE_OS: MaintenanceOS[] = [
 ];
 
 export interface TimeRecord {
+    id?: string;
     date: string;
     entry1: string;
     exit1: string;
     entry2: string;
     exit2: string;
     totalHours: string;
-    status: 'REGULAR' | 'ABSENT' | 'MANUAL_EDIT' | 'OVERTIME';
+    status: 'REGULAR' | 'ABSENT' | 'MANUAL_EDIT' | 'OVERTIME' | 'MISSING';
 }
 
 export interface PayrollEntry {

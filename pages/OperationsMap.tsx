@@ -8,16 +8,52 @@ const DAYS_IN_MONTH = 31;
 const MOCK_MONTH = 'Dezembro 2024';
 
 const OperationsMap: React.FC = () => {
-    const [data, setData] = useState<EquipmentTimeline[]>([]);
-    const [selectedCell, setSelectedCell] = useState<{ eqId: string, day: number } | null>(null);
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [data, setData] = useState<any[]>([]);
+    const [selectedCell, setSelectedCell] = useState<{ eqId: string, day: number, dateStr: string } | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1; // 1-12
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const monthName = currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+
+    const filteredData = data.filter(eq =>
+        (eq.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (eq.model || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    const loadData = async () => {
+        setLoading(true);
+        try {
+            const { operationsService } = await import('../services/operationsService');
+            // @ts-ignore
+            const result = await operationsService.getOperationsMapData(month, year);
+            setData(result);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ...
+
+    // No input:
+    // <input 
+    //    placeholder="Filtrar Equipamento..." 
+    //    className="..."
+    //    value={searchTerm}
+    //    onChange={(e) => setSearchTerm(e.target.value)}
+    // />
 
     useEffect(() => {
-        const load = async () => {
-            const result = await dashboardService.getOperationsMapData();
-            setData(result as EquipmentTimeline[]);
-        };
-        load();
-    }, []);
+        loadData();
+    }, [month, year]);
+
+    const handlePrevMonth = () => setCurrentDate(new Date(year, month - 2, 1));
+    const handleNextMonth = () => setCurrentDate(new Date(year, month, 1));
 
     const getStatusColor = (status: TimelineCell['status']) => {
         switch (status) {
@@ -25,7 +61,7 @@ const OperationsMap: React.FC = () => {
             case 'STANDBY': return 'bg-slate-700/50 text-slate-400 border-slate-600 hover:bg-slate-700';
             case 'MAINTENANCE': return 'bg-red-500/20 text-red-500 border-red-500/30 hover:bg-red-500/40';
             case 'RAIN': return 'bg-blue-500/20 text-blue-400 border-blue-500/30 hover:bg-blue-500/40';
-            default: return 'bg-transparent border-slate-800/50 hover:bg-slate-800';
+            default: return 'bg-transparent border-slate-800/50 hover:bg-slate-800/50';
         }
     };
 
@@ -39,7 +75,24 @@ const OperationsMap: React.FC = () => {
     };
 
     const handleCellClick = (eqId: string, day: number) => {
-        setSelectedCell({ eqId, day });
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        setSelectedCell({ eqId, day, dateStr });
+    };
+
+    const handleSave = async (updatedCell: any) => {
+        if (!selectedCell) return;
+
+        try {
+            const { operationsService } = await import('../services/operationsService');
+            // @ts-ignore
+            await operationsService.saveOperation(selectedCell.eqId, selectedCell.dateStr, updatedCell);
+
+            // Reload data to reflect changes
+            await loadData();
+            setSelectedCell(null);
+        } catch (e) {
+            alert('Erro ao salvar: ' + e);
+        }
     };
 
     return (
@@ -58,9 +111,9 @@ const OperationsMap: React.FC = () => {
 
                 <div className="flex items-center gap-4">
                     <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-4 py-2">
-                        <button className="text-slate-400 hover:text-white"><ChevronLeft size={16} /></button>
-                        <span className="mx-4 text-sm font-bold text-white uppercase tracking-wider">{MOCK_MONTH}</span>
-                        <button className="text-slate-400 hover:text-white"><ChevronRight size={16} /></button>
+                        <button onClick={handlePrevMonth} className="text-slate-400 hover:text-white"><ChevronLeft size={16} /></button>
+                        <span className="mx-4 text-sm font-bold text-white uppercase tracking-wider w-32 text-center">{monthName}</span>
+                        <button onClick={handleNextMonth} className="text-slate-400 hover:text-white"><ChevronRight size={16} /></button>
                     </div>
                     <div className="h-8 w-[1px] bg-slate-800"></div>
                     <button className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-600/20">
@@ -73,7 +126,12 @@ const OperationsMap: React.FC = () => {
             <div className="h-12 border-b border-slate-900 bg-slate-950/50 flex items-center px-6 gap-4 shrink-0">
                 <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 w-64">
                     <Search size={14} className="text-slate-500" />
-                    <input placeholder="Filtrar Equipamento..." className="bg-transparent text-xs text-white outline-none w-full placeholder:text-slate-600" />
+                    <input
+                        placeholder="Filtrar Equipamento..."
+                        className="bg-transparent text-xs text-white outline-none w-full placeholder:text-slate-600 uppercase"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
                 </div>
 
                 <div className="flex items-center gap-3 ml-auto">
@@ -96,14 +154,14 @@ const OperationsMap: React.FC = () => {
             <div className="flex-1 overflow-hidden flex flex-col relative">
                 {/* Header Row (Days) */}
                 <div className="flex border-b border-slate-800 bg-slate-900/50 overflow-hidden shrink-0">
-                    <div className="w-64 shrink-0 p-3 border-r border-slate-800 text-xs font-black text-slate-500 uppercase tracking-wider flex items-center">
-                        Equipamento / Local
+                    <div className="w-64 shrink-0 p-3 border-r border-slate-800 text-xs font-black text-slate-500 uppercase tracking-wider flex items-center pl-6">
+                        Equipamento
                     </div>
                     <div className="flex-1 overflow-x-auto custom-scrollbar flex">
-                        {Array.from({ length: DAYS_IN_MONTH }, (_, i) => (
+                        {Array.from({ length: daysInMonth }, (_, i) => (
                             <div key={i} className="w-12 shrink-0 border-r border-slate-800/50 py-2 flex flex-col items-center justify-center">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">{['D', 'S', 'T', 'Q', 'Q', 'S', 'S'][i % 7]}</span>
-                                <span className={`text-xs font-black ${i % 7 === 0 || i % 7 === 6 ? 'text-indigo-400' : 'text-white'}`}>{i + 1}</span>
+                                <span className="text-[10px] font-bold text-slate-500 uppercase">{['D', 'S', 'T', 'Q', 'Q', 'S', 'S'][(new Date(year, month - 1, i + 1).getDay())]}</span>
+                                <span className={`text-xs font-black ${new Date(year, month - 1, i + 1).getDay() === 0 || new Date(year, month - 1, i + 1).getDay() === 6 ? 'text-indigo-400' : 'text-white'}`}>{i + 1}</span>
                             </div>
                         ))}
                     </div>
@@ -111,58 +169,46 @@ const OperationsMap: React.FC = () => {
 
                 {/* Body */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    {data.map(eq => (
-                        <div key={eq.id} className="flex border-b border-slate-800/50 hover:bg-slate-900/20 transition-colors">
-                            {/* Equipment Column */}
-                            <div className="w-64 shrink-0 p-3 border-r border-slate-800 bg-slate-950 z-10 sticky left-0 flex flex-col justify-center">
-                                <p className="text-sm font-bold text-white">{eq.name}</p>
-                                <p className="text-[10px] text-slate-500 font-mono">{eq.id}</p>
-                            </div>
-
-                            {/* Cells */}
-                            <div className="flex-1 flex">
-                                {eq.timeline.map(cell => (
-                                    <div
-                                        key={cell.day}
-                                        onClick={() => handleCellClick(eq.id, cell.day)}
-                                        className={`w-12 shrink-0 border-r border-slate-800/30 h-16 p-1 cursor-pointer transition-all relative group`}
-                                    >
-                                        <div className={`w-full h-full rounded border flex flex-col items-center justify-center gap-1 ${getStatusColor(cell.status)}`}>
-                                            {cell.status === 'WORKED' && <span className="text-[10px] font-black">{cell.hours}h</span>}
-                                            {getStatusIcon(cell.status)}
+                    {loading ? (
+                        <div className="flex items-center justify-center h-full text-slate-500 animate-pulse">Carregando Mapa...</div>
+                    ) : (
+                        filteredData.map(eq => (
+                            <div key={eq.id} className="flex border-b border-slate-800/50 hover:bg-slate-900/20 transition-colors">
+                                <div className="w-64 shrink-0 p-3 border-r border-slate-800 bg-slate-950 z-10 sticky left-0 flex flex-col justify-center pl-6 shadow-[4px_0_10px_rgba(0,0,0,0.5)]">
+                                    <p className="text-sm font-bold text-white">{eq.name}</p>
+                                    <p className="text-[10px] text-slate-500 font-mono">{eq.model}</p>
+                                </div>
+                                <div className="flex-1 flex">
+                                    {eq.timeline.map((cell: any) => (
+                                        <div
+                                            key={cell.day}
+                                            onClick={() => handleCellClick(eq.id, cell.day)}
+                                            className={`w-12 shrink-0 border-r border-slate-800/30 h-16 p-1 cursor-pointer transition-all relative group hover:bg-white/5 active:scale-95`}
+                                        >
+                                            <div className={`w-full h-full rounded border flex flex-col items-center justify-center gap-1 ${getStatusColor(cell.status)}`}>
+                                                {cell.status === 'WORKED' && <span className="text-[10px] font-black">{cell.hours}h</span>}
+                                                {getStatusIcon(cell.status)}
+                                            </div>
+                                            {cell.location && (
+                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-slate-700 shadow-xl font-bold">
+                                                    {cell.location}
+                                                </div>
+                                            )}
                                         </div>
-
-                                        {/* Tooltip */}
-                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-slate-700 shadow-xl font-bold">
-                                            {cell.location || 'Sem Local'}
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        ))
+                    )}
                 </div>
             </div>
 
-            {/* Edit Modal (Enhanced) */}
+            {/* Edit Modal */}
             {selectedCell && (
                 <EditModal
-                    cell={data.find(d => d.id === selectedCell.eqId)?.timeline.find(t => t.day === selectedCell.day)!}
+                    cell={data.find(d => d.id === selectedCell.eqId)?.timeline.find((t: any) => t.day === selectedCell.day)}
                     onClose={() => setSelectedCell(null)}
-                    onSave={(updatedCell) => {
-                        const newData = data.map(eq => {
-                            if (eq.id === selectedCell.eqId) {
-                                return {
-                                    ...eq,
-                                    timeline: eq.timeline.map(t => t.day === selectedCell.day ? updatedCell : t)
-                                };
-                            }
-                            return eq;
-                        });
-                        setData(newData);
-                        dashboardService.updateOperationsMapData(newData.find(d => d.id === selectedCell.eqId)!);
-                        setSelectedCell(null);
-                    }}
+                    onSave={handleSave}
                 />
             )}
         </div>

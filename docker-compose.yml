@@ -1,0 +1,64 @@
+version: '3.3'
+
+services:
+  # Banco de Dados da API (Postgres Local)
+  evolution_db:
+    image: postgres:15-alpine
+    restart: always
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution_password
+    ports:
+      - "5432:5432"
+
+  # Evolution API V2
+  evolution_api:
+    image: atendai/evolution-api:v2.1.1
+    restart: always
+    depends_on:
+      - evolution_db
+    ports:
+      - "8080:8080"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      # --- AUTHENTICATION ---
+      AUTHENTICATION_API_KEY: "terrapro123"
+
+      # --- DATABASE ---
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: "postgresql://evolution:evolution_password@evolution_db:5432/evolution"
+      DATABASE_CLIENT_NAME: "evolution_v2"
+
+      # --- SERVER ---
+      SERVER_PORT: 8080
+      SERVER_URL: "http://localhost:8080"
+
+      # --- WEBSOCKET ---
+      WEBSOCKET_ENABLED: "false"
+
+      # --- WA ---
+      WA_SESSION_DATA_PATH: "/evolution/store"
+
+      # --- REDIS (Opicional, desativado pra economizar memória) ---
+      CACHE_REDIS_ENABLED: "false"
+
+      # --- S3 (Opicional, desativado) ---
+      S3_ENABLED: "false"
+
+      # --- LOG ---
+      LOG_LEVEL: "ERROR"
+      LOG_COLOR: "true"
+
+    volumes:
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+
+volumes:
+  evolution_pgdata:
+  evolution_instances:
+  evolution_store:

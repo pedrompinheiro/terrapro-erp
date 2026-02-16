@@ -8,9 +8,16 @@ interface SidebarProps {
 }
 
 import { NavLink } from 'react-router-dom';
+import { usePermission } from '../hooks/usePermission';
 
 const Sidebar: React.FC<SidebarProps> = ({ onLogout }) => {
-  const groupedItems = NAV_ITEMS.reduce((acc: any, item) => {
+  const { hasPermission, loading } = usePermission();
+
+  const groupedItems = NAV_ITEMS.filter(item => {
+    // Se não tiver slug definido, mostra por padrão (Dashboard, etc)
+    if (!item.slug) return true;
+    return hasPermission(item.slug);
+  }).reduce((acc: any, item) => {
     if (!acc[item.group]) acc[item.group] = [];
     acc[item.group].push(item);
     return acc;

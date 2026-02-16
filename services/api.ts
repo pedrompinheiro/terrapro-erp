@@ -87,15 +87,8 @@ export const dashboardService = {
 
     // HR
     getHREmployees: async () => {
-        // TEMPORÁRIO: Criar cliente novo para debug
-        const { createClient } = await import('@supabase/supabase-js');
-        const tempClient = createClient(
-            import.meta.env.VITE_SUPABASE_URL,
-            import.meta.env.VITE_SUPABASE_ANON_KEY
-        );
-
-        console.log('🔄 [api.ts] Buscando funcionarios com cliente NOVO...');
-        const { data, error } = await tempClient
+        console.log('🔄 [api.ts] Buscando funcionarios...');
+        const { data, error } = await supabase
             .from('employees')
             .select('*')
             .order('name');
