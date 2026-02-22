@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Fuel, Droplets, History, AlertTriangle, Save, ArrowDownLeft, ArrowUpRight, Camera, Settings, MessageCircle, Trash2, Lock, X, Edit } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Fuel, Droplets, History, AlertTriangle, Save, ArrowDownLeft, ArrowUpRight, Camera, Settings, MessageCircle, Trash2, Lock, X, Edit, BarChart3 } from 'lucide-react';
 import Modal from '../components/Modal';
 import { useQuery } from '@tanstack/react-query';
 import { fleetManagementService } from '../services/fleetService';
@@ -32,6 +33,7 @@ interface FuelRecord {
 }
 
 const FuelManagement: React.FC = () => {
+  const navigate = useNavigate();
   const [modalType, setModalType] = useState<'NONE' | 'PURCHASE' | 'SUPPLY' | 'MANAGE_TANKS'>('NONE');
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -101,10 +103,15 @@ const FuelManagement: React.FC = () => {
     responsibleId: '',
     liters: '',
     horometer: '',
-    totalValue: '', // Antigo pricePerLiter, agora valor total da nota
+    totalValue: '',
     invoiceNumber: '',
     date: new Date().toISOString().slice(0, 16),
-    observation: ''
+    observation: '',
+    // Campos de Pagamento (Compra)
+    paymentMethod: 'BOLETO' as 'BOLETO' | 'PIX' | 'TRANSFERENCIA' | 'DINHEIRO' | 'CHEQUE',
+    installments: '1',      // Número de parcelas
+    installmentInterval: '30', // Intervalo em dias entre parcelas
+    firstDueDate: '',        // Data do 1º vencimento (se vazio, usa data da compra + intervalo)
   });
 
   // Tank Form State
@@ -134,7 +141,8 @@ const FuelManagement: React.FC = () => {
     setFormData({
       tankId: tanks[0]?.id || '', assetId: '', supplierId: '', responsibleId: '',
       liters: '', horometer: '', totalValue: '', invoiceNumber: '',
-      date: new Date().toISOString().slice(0, 16), observation: ''
+      date: new Date().toISOString().slice(0, 16), observation: '',
+      paymentMethod: 'BOLETO', installments: '1', installmentInterval: '30', firstDueDate: ''
     });
   };
 
@@ -155,9 +163,13 @@ const FuelManagement: React.FC = () => {
       liters: String(record.liters),
       horometer: record.horometer ? String(record.horometer) : '',
       totalValue: String(totalVal),
-      invoiceNumber: record.invoice_number || '', // NFe
+      invoiceNumber: record.invoice_number || '',
       date: new Date(record.date).toISOString().slice(0, 16),
-      observation: ''
+      observation: '',
+      paymentMethod: (record as any).payment_method || 'BOLETO',
+      installments: String((record as any).installments || 1),
+      installmentInterval: String((record as any).installment_interval || 30),
+      firstDueDate: (record as any).first_due_date || ''
     });
   };
 
@@ -261,6 +273,11 @@ const FuelManagement: React.FC = () => {
         }
       }
 
+      const valorTotal = modalType === 'PURCHASE' ? parseFloat(formData.totalValue || '0') : null;
+
+      const numParcelas = modalType === 'PURCHASE' ? parseInt(formData.installments || '1') : 1;
+      const intervaloDias = parseInt(formData.installmentInterval || '30');
+
       const payload = {
         operation_type: modalType === 'PURCHASE' ? 'IN' : 'OUT',
         tank_id: formData.tankId,
@@ -271,8 +288,11 @@ const FuelManagement: React.FC = () => {
         supplier_id: modalType === 'PURCHASE' ? formData.supplierId : null,
         supplier_name: modalType === 'PURCHASE' ? supplier?.name : null,
         invoice_number: modalType === 'PURCHASE' ? formData.invoiceNumber : null,
-        // Correção: Calcular preço unitário (Total / Litros)
-        price_per_liter: modalType === 'PURCHASE' ? (parseFloat(formData.totalValue || '0') / parseFloat(formData.liters || '1')) : null,
+        price_per_liter: modalType === 'PURCHASE' ? ((valorTotal || 0) / parseFloat(formData.liters || '1')) : null,
+        total_value: valorTotal,
+        payment_method: modalType === 'PURCHASE' ? formData.paymentMethod : null,
+        installments: modalType === 'PURCHASE' ? numParcelas : null,
+        installment_interval: modalType === 'PURCHASE' ? intervaloDias : null,
 
         // Dados de Abastecimento
         asset_id: modalType === 'SUPPLY' ? formData.assetId : null,
@@ -282,10 +302,59 @@ const FuelManagement: React.FC = () => {
         responsible_name: modalType === 'SUPPLY' ? employee?.full_name : null,
       };
 
+      // Helper: gerar número do título financeiro vinculado à NF
+      const gerarNumeroTitulo = (nf: string) => `DSL-${nf}`;
+
+      // Helper: calcular data de vencimento da parcela
+      const calcularVencimento = (parcelaNum: number): string => {
+        const base = formData.firstDueDate
+          ? new Date(formData.firstDueDate + 'T12:00:00')
+          : new Date(formData.date);
+        const venc = new Date(base);
+        if (formData.firstDueDate) {
+          // Se tem data do 1º vencimento, adicionar intervalo a partir da 2ª parcela
+          venc.setDate(venc.getDate() + (intervaloDias * (parcelaNum - 1)));
+        } else {
+          // Sem data específica: 1ª parcela = data + intervalo, 2ª = data + 2*intervalo, etc.
+          venc.setDate(venc.getDate() + (intervaloDias * parcelaNum));
+        }
+        return venc.toISOString().split('T')[0];
+      };
+
+      // Mapear forma de pagamento para label legível
+      const formaLabel: Record<string, string> = {
+        'BOLETO': 'Boleto', 'PIX': 'PIX', 'TRANSFERENCIA': 'Transferência',
+        'DINHEIRO': 'Dinheiro', 'CHEQUE': 'Cheque'
+      };
+
       if (editingId) {
         // UPDATE
         const { error } = await supabase.from('fuel_records').update(payload).eq('id', editingId);
         if (error) throw error;
+
+        // Sincronizar Financeiro (Se for Compra editada — atualiza apenas parcelas PENDENTES)
+        if (modalType === 'PURCHASE' && formData.invoiceNumber && valorTotal) {
+          const tituloRef = gerarNumeroTitulo(formData.invoiceNumber);
+          const { data: contasExistentes } = await supabase
+            .from('contas_pagar')
+            .select('id, status, parcela_numero')
+            .like('numero_titulo', `${tituloRef}%`)
+            .eq('status', 'PENDENTE');
+
+          if (contasExistentes && contasExistentes.length > 0) {
+            // Recalcular valor por parcela
+            const valorParcela = Math.round((valorTotal / numParcelas) * 100) / 100;
+            for (const conta of contasExistentes) {
+              await supabase.from('contas_pagar').update({
+                fornecedor_id: formData.supplierId,
+                fornecedor_nome: supplier?.name || 'Fornecedor de Combustível',
+                valor_original: valorParcela,
+                forma_pagamento: formData.paymentMethod,
+              }).eq('id', conta.id);
+            }
+          }
+        }
+
         alert('Registro atualizado com sucesso!');
       } else {
         // INSERT
@@ -293,24 +362,40 @@ const FuelManagement: React.FC = () => {
         const { error } = await supabase.from('fuel_records').insert(payload);
         if (error) throw error;
 
-        // 2. Integração Financeira (Se for Compra)
-        if (modalType === 'PURCHASE') {
-          const valorTotal = parseFloat(formData.totalValue);
-          const { error: finError } = await supabase.from('contas_pagar').insert({
-            fornecedor_id: formData.supplierId,
-            fornecedor_nome: supplier?.name || 'Fornecedor de Combustível',
-            descricao: `Compra Diesel - NF ${formData.invoiceNumber} - ${formData.liters}L`,
-            valor_original: valorTotal,
-            data_emissao: new Date().toISOString(),
-            data_vencimento: new Date(formData.date).toISOString().split('T')[0], // Assumindo vencimento no dia
-            status: 'PENDENTE',
-            numero_titulo: `DSL-${formData.invoiceNumber}-${Date.now().toString().slice(-4)}`,
-            observacao: `Gerado automaticamente pelo Módulo de Combustível. Tanque: ${tank?.name}`
-          });
+        // 2. Integração Financeira (Se for Compra → Gerar Contas a Pagar com Parcelas)
+        if (modalType === 'PURCHASE' && valorTotal) {
+          const tituloRef = gerarNumeroTitulo(formData.invoiceNumber);
+          const valorParcela = Math.round((valorTotal / numParcelas) * 100) / 100;
+          // Ajuste de centavos na última parcela
+          const valorUltimaParcela = Math.round((valorTotal - (valorParcela * (numParcelas - 1))) * 100) / 100;
+
+          const parcelas = [];
+          for (let i = 1; i <= numParcelas; i++) {
+            parcelas.push({
+              fornecedor_id: formData.supplierId,
+              fornecedor_nome: supplier?.name || 'Fornecedor de Combustível',
+              descricao: numParcelas > 1
+                ? `Diesel NF ${formData.invoiceNumber} - Parcela ${i}/${numParcelas} (${formData.liters}L)`
+                : `Compra Diesel - NF ${formData.invoiceNumber} - ${formData.liters}L`,
+              valor_original: i === numParcelas ? valorUltimaParcela : valorParcela,
+              data_emissao: new Date().toISOString().split('T')[0],
+              data_vencimento: calcularVencimento(i),
+              status: 'PENDENTE',
+              categoria: 'COMBUSTIVEL',
+              forma_pagamento: formData.paymentMethod,
+              numero_titulo: `${tituloRef}-${i}/${numParcelas}`,
+              numero_documento: formData.invoiceNumber,
+              parcela_numero: i,
+              parcela_total: numParcelas,
+              observacao: `Gerado automaticamente - Combustível. Tanque: ${tank?.name}. ${formData.liters}L a R$ ${(valorTotal / parseFloat(formData.liters)).toFixed(4)}/L. Pgto: ${formaLabel[formData.paymentMethod] || formData.paymentMethod}`
+            });
+          }
+
+          const { error: finError } = await supabase.from('contas_pagar').insert(parcelas);
 
           if (finError) {
             console.error('Erro ao gerar financeiro:', finError);
-            alert('Atenção: Combustível salvo, mas houve erro ao gerar o Contas a Pagar: ' + finError.message);
+            alert(`⚠️ Combustível salvo, mas houve erro ao gerar ${numParcelas > 1 ? 'as parcelas no' : 'o'} Contas a Pagar: ${finError.message}`);
           }
         }
       }
@@ -349,9 +434,25 @@ const FuelManagement: React.FC = () => {
   };
 
   const confirmAuth = async () => {
-    // Simulação de Senha Admin (Em produção, verificar role ou tabela de usuários)
-    if (adminPassword !== 'admin123' && adminPassword !== 'terrapro2024') {
-      alert("Senha de Administrador Incorreta!");
+    // Validar senha com o banco (tabela app_config)
+    try {
+      const { data } = await supabase
+        .from('app_config')
+        .select('valor')
+        .eq('chave', 'admin_password')
+        .single();
+
+      if (!data?.valor) {
+        alert("Senha mestra não configurada. Configure no módulo Financeiro → Configurações.");
+        return;
+      }
+
+      if (adminPassword !== data.valor) {
+        alert("Senha de Administrador Incorreta!");
+        return;
+      }
+    } catch {
+      alert("Erro ao validar senha. Verifique a conexão.");
       return;
     }
 
@@ -365,6 +466,34 @@ const FuelManagement: React.FC = () => {
     if (authAction === 'DELETE' && recordToDelete) {
       setLoading(true);
       try {
+        // Se for registro de COMPRA (IN), cancelar o financeiro vinculado
+        if (recordToDelete.type === 'IN') {
+          // Buscar dados do registro para encontrar a NF
+          const { data: fuelRec } = await supabase
+            .from('fuel_records')
+            .select('invoice_number')
+            .eq('id', recordToDelete.id)
+            .single();
+
+          if (fuelRec?.invoice_number) {
+            const tituloRef = `DSL-${fuelRec.invoice_number}`;
+            // Cancelar conta a pagar vinculada (apenas se PENDENTE)
+            const { data: contaVinculada } = await supabase
+              .from('contas_pagar')
+              .select('id, status')
+              .like('numero_titulo', `${tituloRef}%`)
+              .eq('status', 'PENDENTE')
+              .single();
+
+            if (contaVinculada) {
+              await supabase.from('contas_pagar').update({
+                status: 'CANCELADO',
+                observacao: `Cancelado automaticamente: registro de combustível excluído em ${new Date().toLocaleDateString('pt-BR')}`
+              }).eq('id', contaVinculada.id);
+            }
+          }
+        }
+
         const { error } = await supabase.from('fuel_records').delete().eq('id', recordToDelete.id);
         if (error) throw error;
 
@@ -399,6 +528,13 @@ const FuelManagement: React.FC = () => {
           <p className="text-slate-500 mt-1">Controle de estoque, compras de diesel e abastecimentos da frota.</p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => navigate('/fuel/reports')}
+            className="bg-slate-800 hover:bg-slate-700 transition-all text-white px-5 py-3 rounded-xl text-sm font-bold flex items-center gap-2 border border-slate-700"
+          >
+            <BarChart3 size={18} />
+            Relatórios
+          </button>
           <button
             onClick={() => setModalType('PURCHASE')}
             className="bg-emerald-600 hover:bg-emerald-500 transition-all text-white px-6 py-3 rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-2 uppercase tracking-wide"
@@ -666,6 +802,109 @@ const FuelManagement: React.FC = () => {
                     className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none ${!!editingId && isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                 </div>
+              </div>
+
+              {/* --- Seção de Pagamento / Parcelamento --- */}
+              <div className="mt-3 pt-3 border-t border-emerald-500/20 space-y-3">
+                <label className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                  💳 Condição de Pagamento
+                </label>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-emerald-500 uppercase">Forma de Pagamento</label>
+                    <select
+                      value={formData.paymentMethod}
+                      onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value as any })}
+                      disabled={!!editingId && isEditLocked}
+                      className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none ${!!editingId && isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="BOLETO">Boleto Bancário</option>
+                      <option value="PIX">PIX</option>
+                      <option value="TRANSFERENCIA">Transferência Bancária</option>
+                      <option value="DINHEIRO">Dinheiro</option>
+                      <option value="CHEQUE">Cheque</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-emerald-500 uppercase">Parcelas</label>
+                    <select
+                      value={formData.installments}
+                      onChange={(e) => setFormData({ ...formData, installments: e.target.value })}
+                      disabled={!!editingId && isEditLocked}
+                      className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none ${!!editingId && isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="1">À Vista (1x)</option>
+                      <option value="2">2x</option>
+                      <option value="3">3x</option>
+                      <option value="4">4x</option>
+                      <option value="5">5x</option>
+                      <option value="6">6x</option>
+                    </select>
+                  </div>
+                </div>
+
+                {parseInt(formData.installments) > 1 && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-emerald-500 uppercase">Intervalo entre Parcelas</label>
+                      <select
+                        value={formData.installmentInterval}
+                        onChange={(e) => setFormData({ ...formData, installmentInterval: e.target.value })}
+                        disabled={!!editingId && isEditLocked}
+                        className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none ${!!editingId && isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="7">7 dias</option>
+                        <option value="14">14 dias</option>
+                        <option value="15">15 dias</option>
+                        <option value="21">21 dias</option>
+                        <option value="28">28 dias</option>
+                        <option value="30">30 dias</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-emerald-500 uppercase">1º Vencimento (Opcional)</label>
+                      <input
+                        type="date"
+                        value={formData.firstDueDate}
+                        onChange={(e) => setFormData({ ...formData, firstDueDate: e.target.value })}
+                        disabled={!!editingId && isEditLocked}
+                        className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none ${!!editingId && isEditLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Preview das Parcelas */}
+                {formData.totalValue && parseInt(formData.installments) > 1 && (
+                  <div className="bg-slate-950/50 rounded-lg p-3 space-y-1">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase mb-2">Prévia das Parcelas:</p>
+                    {Array.from({ length: parseInt(formData.installments) }, (_, i) => {
+                      const total = parseFloat(formData.totalValue || '0');
+                      const valorParcela = Math.round((total / parseInt(formData.installments)) * 100) / 100;
+                      const isLast = i === parseInt(formData.installments) - 1;
+                      const valorFinal = isLast ? Math.round((total - (valorParcela * (parseInt(formData.installments) - 1))) * 100) / 100 : valorParcela;
+                      const intervalo = parseInt(formData.installmentInterval || '30');
+                      const base = formData.firstDueDate ? new Date(formData.firstDueDate + 'T12:00:00') : new Date(formData.date);
+                      const venc = new Date(base);
+                      if (formData.firstDueDate) {
+                        venc.setDate(venc.getDate() + (intervalo * i));
+                      } else {
+                        venc.setDate(venc.getDate() + (intervalo * (i + 1)));
+                      }
+                      return (
+                        <div key={i} className="flex justify-between items-center text-xs">
+                          <span className="text-slate-400">{i + 1}ª parcela — {venc.toLocaleDateString('pt-BR')}</span>
+                          <span className="text-emerald-400 font-bold">R$ {valorFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-800 mt-1">
+                      <span className="text-white font-bold">Total</span>
+                      <span className="text-white font-bold">R$ {parseFloat(formData.totalValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

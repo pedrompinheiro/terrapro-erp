@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Configurações (Lendo do .env ou usando padrão local)
 const API_URL = import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080';
-const API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY || 'terrapro123';
+const API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY || '';
 const INSTANCE_NAME = 'terrapro_bot'; // Nome fixo da instância para facilitar
 
 // Configuração do Axios

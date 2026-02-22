@@ -14,6 +14,7 @@ const Maintenance = lazy(() => import('./pages/Maintenance'));
 const Financial = lazy(() => import('./pages/Financial'));
 const MapDigital = lazy(() => import('./pages/MapDigital'));
 const FuelManagement = lazy(() => import('./pages/FuelManagement'));
+const FuelReports = lazy(() => import('./pages/FuelReports'));
 const Billing = lazy(() => import('./pages/Billing'));
 const BIReports = lazy(() => import('./pages/BIReports'));
 const Login = lazy(() => import('./pages/Login'));
@@ -30,6 +31,7 @@ const UpdatePassword = lazy(() => import('./pages/UpdatePassword'));
 const Migration = lazy(() => import('./pages/Migration'));
 const TestConnection = lazy(() => import('./pages/TestConnection'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
+const TimecardCalc = lazy(() => import('./pages/TimecardCalc'));
 
 import { supabase } from './lib/supabase';
 import { UserProfile } from './types';
@@ -170,6 +172,7 @@ const App: React.FC = () => {
                 <Route path="/billing" element={<Billing />} />
                 <Route path="/map" element={<MapDigital />} />
                 <Route path="/fuel" element={<FuelManagement />} />
+                <Route path="/fuel/reports" element={<FuelReports />} />
                 <Route path="/whatsapp" element={<WhatsAppAutomation />} />
                 <Route path="/rh" element={<HRManagement />} />
                 <Route path="/cadastros" element={<Registrations />} />
@@ -178,6 +181,8 @@ const App: React.FC = () => {
                 <Route path="/security" element={<SecurityAudit />} />
                 <Route path="/configuracoes" element={<Settings />} />
                 <Route path="/system-logs" element={<SystemLogs />} />
+                <Route path="/ponto/calculos" element={<TimecardCalc />} />
+                <Route path="/ponto/ocr" element={<Timekeeping />} />
               </Routes>
             </Suspense>
           </div>

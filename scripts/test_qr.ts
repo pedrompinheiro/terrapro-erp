@@ -7,7 +7,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 const API_URL = process.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080';
-const API_KEY = process.env.VITE_EVOLUTION_API_KEY || 'terrapro123';
+const API_KEY = process.env.VITE_EVOLUTION_API_KEY || '';
 const INSTANCE_NAME = 'terrapro_bot';
 
 console.log(`Testing Evolution API at ${API_URL}`);

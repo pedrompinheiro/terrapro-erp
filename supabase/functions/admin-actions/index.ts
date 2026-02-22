@@ -21,19 +21,31 @@ Deno.serve(async (req: Request) => {
     try {
         const { action, payload } = await req.json();
 
-        // 1. Listar Usuários
+        // 1. Listar Usuários (com status do user_profiles)
         if (action === 'listUsers') {
             const { data: users, error } = await supabaseAdmin.auth.admin.listUsers();
             if (error) throw error;
+
+            // Buscar status de todos os user_profiles
+            const { data: profiles } = await supabaseAdmin
+                .from('user_profiles')
+                .select('id, status, full_name, company_id');
+
+            const profileMap: Record<string, any> = {};
+            if (profiles) {
+                profiles.forEach((p: any) => { profileMap[p.id] = p; });
+            }
 
             // Mapeia para formato amigável
             const userList = users.users.map(u => ({
                 id: u.id,
                 email: u.email,
-                name: u.user_metadata?.full_name || u.email?.split('@')[0],
+                name: u.user_metadata?.full_name || profileMap[u.id]?.full_name || u.email?.split('@')[0],
                 role: u.app_metadata?.role || u.user_metadata?.role || 'OPERATOR',
                 lastLogin: u.last_sign_in_at,
-                createdAt: u.created_at
+                createdAt: u.created_at,
+                profileStatus: profileMap[u.id]?.status || null,
+                companyId: profileMap[u.id]?.company_id || null,
             }));
 
             return new Response(JSON.stringify(userList), {
@@ -84,6 +96,27 @@ Deno.serve(async (req: Request) => {
             const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
             if (error) throw error;
             return new Response(JSON.stringify({ success: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        // 5. Aprovar / Bloquear Usuário (atualiza user_profiles.status)
+        if (action === 'setUserStatus') {
+            const { userId, status } = payload; // status: 'APPROVED' | 'BLOCKED' | 'PENDING'
+
+            const validStatuses = ['APPROVED', 'BLOCKED', 'PENDING', 'REJECTED'];
+            if (!validStatuses.includes(status)) {
+                throw new Error(`Status inválido: ${status}. Use: ${validStatuses.join(', ')}`);
+            }
+
+            const { error } = await supabaseAdmin
+                .from('user_profiles')
+                .update({ status })
+                .eq('id', userId);
+
+            if (error) throw error;
+
+            return new Response(JSON.stringify({ success: true, userId, status }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
         }

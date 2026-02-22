@@ -240,9 +240,12 @@ const Financial: React.FC = () => {
         .eq('chave', 'admin_password')
         .single();
 
-      const realPassword = data?.valor || 'admin123'; // Fallback se não configurado
+      if (!data?.valor) {
+        toast.error("Senha mestra não configurada. Vá em Configurações para definir.", { icon: '⚙️' });
+        return;
+      }
 
-      if (adminPassword === realPassword) {
+      if (adminPassword === data.valor) {
         if (securityAction) {
           await securityAction();
         }
@@ -271,7 +274,11 @@ const Financial: React.FC = () => {
     try {
       // Validar senha atual
       const { data } = await supabase.from('app_config').select('valor').eq('chave', 'admin_password').single();
-      const currentReal = data?.valor || 'admin123';
+      const currentReal = data?.valor;
+      if (!currentReal) {
+        toast.error("Senha mestra não configurada. Defina uma senha primeiro.");
+        return;
+      }
 
       if (changePasswordData.current !== currentReal) {
         toast.error("Senha atual incorreta");

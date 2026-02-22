@@ -16,12 +16,12 @@ Deno.serve(async (req: Request) => {
     try {
         // 1. Fetch Latest GPS Data from Selsyn (USING VALIDATED ENDPOINT)
         console.log('Fetching GPS Data...');
-        const url = `https://api.appselsyn.com.br/keek/rest/v1/integracao/operador/posicao`;
+        // Documentação Selsyn: apikey como query parameter
+        const url = `https://api.appselsyn.com.br/keek/rest/v1/integracao/posicao?apikey=${SELSYN_API_KEY}`;
 
         const response = await fetch(url, {
             method: 'GET',
             headers: {
-                'x-api-key': SELSYN_API_KEY,
                 'Accept': 'application/json'
             }
         });
