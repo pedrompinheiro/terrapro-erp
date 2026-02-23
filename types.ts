@@ -69,6 +69,177 @@ export interface StockItem {
   status: 'NORMAL' | 'CRITICAL' | 'WARNING';
 }
 
+// ============================================================
+// MÓDULO ALMOXARIFADO - Tipos completos (Supabase)
+// ============================================================
+
+export interface InventoryCategory {
+  id: string;
+  code: number;
+  name: string;
+  margin_1: number;
+  margin_2: number;
+  margin_3: number;
+  notes?: string;
+  active: boolean;
+}
+
+export interface InventoryBrand {
+  id: string;
+  code: number;
+  name: string;
+  active: boolean;
+}
+
+export interface InventoryItem {
+  id: string;
+  code: number;
+  sku?: string;
+  barcode?: string;
+  description: string;
+
+  is_service: boolean;
+  is_product: boolean;
+  item_type: 'PRODUTO' | 'SERVICO';
+  unit: string;
+
+  category_id?: string;
+  category_name?: string;
+  brand_id?: string;
+  brand_name?: string;
+
+  // Estoque
+  qty_minimum: number;
+  qty_current: number;
+  qty_maximum: number;
+  qty_unit: number;
+  qty_in: number;
+  qty_out: number;
+  qty_balance: number;
+  qty_shortage: number;
+
+  // Preços
+  cost_price: number;
+  sell_price: number;
+  margin_percent: number;
+  wholesale_price: number;
+  margin_2_percent: number;
+  margin_3_percent: number;
+  commission_percent: number;
+  total_cost: number;
+  profit: number;
+  profit_percent: number;
+
+  // Localização
+  location?: string;
+
+  // Fotos
+  photo_1_url?: string;
+  photo_2_url?: string;
+
+  // Validade
+  has_expiry: boolean;
+  expiry_date?: string;
+
+  // Alertas
+  alert_minimum: boolean;
+  alert_zero: boolean;
+  blocked: boolean;
+
+  // Stats
+  most_sold_value: number;
+  most_sold_qty: number;
+
+  // Fiscal
+  ncm?: string;
+  cfop?: string;
+  origin?: string;
+
+  // Observações
+  notes?: string;
+
+  // Legacy
+  legacy_code?: number;
+  last_purchase_date?: string;
+
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+
+  // Computed status (não vem do BD, calculado no frontend)
+  status?: 'NORMAL' | 'CRITICAL' | 'WARNING';
+}
+
+export interface InventoryMovement {
+  id: string;
+  item_id: string;
+  movement_type: 'ENTRADA_COMPRA' | 'ENTRADA_DEVOLUCAO' | 'ENTRADA_AJUSTE' | 'SAIDA_OS' | 'SAIDA_VENDA' | 'SAIDA_AJUSTE' | 'SAIDA_PERDA';
+  quantity: number;
+  unit_cost: number;
+  total_value: number;
+  balance_after: number;
+  reference_type?: string;
+  reference_id?: string;
+  reference_number?: number;
+  entity_id?: string;
+  entity_name?: string;
+  user_name?: string;
+  invoice_number?: string;
+  invoice_date?: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface ServiceOrder {
+  id: string;
+  order_number: number;
+  is_order: boolean;
+  is_quote: boolean;
+  entry_date?: string;
+  exit_date?: string;
+  client_name?: string;
+  client_phone?: string;
+  equipment_name?: string;
+  model_name?: string;
+  brand_name?: string;
+  plate?: string;
+  km: number;
+  situation?: string;
+  technician_name?: string;
+  products_value: number;
+  services_value: number;
+  total_value: number;
+  is_paid: boolean;
+  status: boolean;
+  created_at?: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  order_number: number;
+  is_order: boolean;
+  is_quote: boolean;
+  order_date?: string;
+  supplier_name?: string;
+  situation?: string;
+  total_value: number;
+  is_paid: boolean;
+  status: boolean;
+  created_at?: string;
+}
+
+export interface Technician {
+  id: string;
+  code: number;
+  name: string;
+  is_technician: boolean;
+  is_mechanic: boolean;
+  phone?: string;
+  cell_phone?: string;
+  email?: string;
+  is_active: boolean;
+}
+
 export interface MaintenanceOS {
   id: string;
   company_id: string;

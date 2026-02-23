@@ -7,9 +7,19 @@ interface ModalProps {
     onClose: () => void;
     title: string;
     children: React.ReactNode;
+    size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl';
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const sizeClasses: Record<string, string> = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-xl',
+    '2xl': 'max-w-2xl',
+    '4xl': 'max-w-4xl',
+};
+
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'lg' }) => {
     const modalRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -34,7 +44,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div
                 ref={modalRef}
-                className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-3xl shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200"
+                className={`bg-slate-900 border border-slate-800 w-full ${sizeClasses[size] || 'max-w-lg'} rounded-3xl shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200`}
             >
                 <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
                     <h3 className="text-lg font-black text-white tracking-tight">{title}</h3>
