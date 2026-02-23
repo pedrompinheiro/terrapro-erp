@@ -69,6 +69,337 @@ export interface StockItem {
   status: 'NORMAL' | 'CRITICAL' | 'WARNING';
 }
 
+// ============================================================
+// MÓDULO ALMOXARIFADO - Tipos completos (Supabase)
+// ============================================================
+
+export interface InventoryCategory {
+  id: string;
+  code: number;
+  name: string;
+  margin_1: number;
+  margin_2: number;
+  margin_3: number;
+  notes?: string;
+  active: boolean;
+}
+
+export interface InventoryBrand {
+  id: string;
+  code: number;
+  name: string;
+  active: boolean;
+}
+
+export interface InventoryItem {
+  id: string;
+  code: number;
+  sku?: string;
+  barcode?: string;
+  description: string;
+
+  is_service: boolean;
+  is_product: boolean;
+  item_type: 'PRODUTO' | 'SERVICO';
+  unit: string;
+
+  category_id?: string;
+  category_name?: string;
+  brand_id?: string;
+  brand_name?: string;
+
+  // Estoque
+  qty_minimum: number;
+  qty_current: number;
+  qty_maximum: number;
+  qty_unit: number;
+  qty_in: number;
+  qty_out: number;
+  qty_balance: number;
+  qty_shortage: number;
+
+  // Preços
+  cost_price: number;
+  sell_price: number;
+  margin_percent: number;
+  wholesale_price: number;
+  margin_2_percent: number;
+  margin_3_percent: number;
+  commission_percent: number;
+  total_cost: number;
+  profit: number;
+  profit_percent: number;
+
+  // Localização
+  location?: string;
+
+  // Fotos
+  photo_1_url?: string;
+  photo_2_url?: string;
+
+  // Validade
+  has_expiry: boolean;
+  expiry_date?: string;
+
+  // Alertas
+  alert_minimum: boolean;
+  alert_zero: boolean;
+  blocked: boolean;
+
+  // Stats
+  most_sold_value: number;
+  most_sold_qty: number;
+
+  // Fiscal
+  ncm?: string;
+  cfop?: string;
+  origin?: string;
+
+  // Observações
+  notes?: string;
+
+  // Legacy
+  legacy_code?: number;
+  last_purchase_date?: string;
+
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+
+  // Computed status (não vem do BD, calculado no frontend)
+  status?: 'NORMAL' | 'CRITICAL' | 'WARNING';
+}
+
+export type InventoryTab = 'ESTOQUE' | 'MOVIMENTACOES' | 'ORDENS_SERVICO' | 'COMPRAS' | 'TECNICOS' | 'RELATORIOS';
+
+export interface InventoryMovement {
+  id: string;
+  item_id: string;
+  movement_type: 'ENTRADA_COMPRA' | 'ENTRADA_DEVOLUCAO' | 'ENTRADA_AJUSTE' | 'SAIDA_OS' | 'SAIDA_VENDA' | 'SAIDA_AJUSTE' | 'SAIDA_PERDA' | 'TRANSFERENCIA';
+  quantity: number;
+  unit_cost: number;
+  total_value: number;
+  balance_after: number;
+  reference_type?: string;
+  reference_id?: string;
+  reference_number?: number;
+  entity_id?: string;
+  entity_name?: string;
+  user_id?: string;
+  user_name?: string;
+  invoice_number?: string;
+  invoice_date?: string;
+  notes?: string;
+  created_at: string;
+  // Joined fields
+  item_description?: string;
+  item_code?: number;
+  item_unit?: string;
+}
+
+export interface ServiceOrder {
+  id: string;
+  order_number: number;
+  is_order: boolean;
+  is_quote: boolean;
+  is_call: boolean;
+  entry_date?: string;
+  entry_time?: string;
+  exit_date?: string;
+  exit_time?: string;
+  client_code?: number;
+  client_name?: string;
+  client_contact?: string;
+  client_phone?: string;
+  client_whatsapp?: string;
+  equipment_code?: number;
+  equipment_name?: string;
+  model_code?: number;
+  model_name?: string;
+  brand_code?: number;
+  brand_name?: string;
+  plate?: string;
+  color?: string;
+  km: number;
+  year_fab?: number;
+  year_model?: number;
+  fuel_type?: string;
+  serial_number?: string;
+  situation_code?: number;
+  situation?: string;
+  defect_1?: string;
+  defect_2?: string;
+  service_1?: string;
+  service_2?: string;
+  service_3?: string;
+  service_4?: string;
+  service_5?: string;
+  technician_code?: number;
+  technician_name?: string;
+  responsible?: string;
+  products_value: number;
+  services_value: number;
+  labor_value: number;
+  displacement_value: number;
+  discount_value: number;
+  total_value: number;
+  payment_form?: string;
+  payment_conditions?: string;
+  is_paid: boolean;
+  observations?: string;
+  defect_memo?: string;
+  findings_memo?: string;
+  service_memo?: string;
+  general_notes_memo?: string;
+  status: boolean;
+  created_at?: string;
+}
+
+export interface ServiceOrderItem {
+  id: string;
+  service_order_id: string;
+  order_number: number;
+  item_id?: string;
+  product_code?: number;
+  description: string;
+  reference?: string;
+  is_service: boolean;
+  is_product: boolean;
+  unit: string;
+  unit_cost: number;
+  unit_price: number;
+  quantity: number;
+  discount: number;
+  discount_percent: number;
+  total: number;
+  commission: number;
+  technician_code?: number;
+  technician_name?: string;
+  client_name?: string;
+  plate?: string;
+  item_date?: string;
+  status: boolean;
+  created_at: string;
+}
+
+export interface ServiceOrderStatus {
+  id: string;
+  code: number;
+  name: string;
+  color: string;
+  icon?: string;
+  is_final: boolean;
+  sort_order: number;
+  active: boolean;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  order_number: number;
+  is_order: boolean;
+  is_quote: boolean;
+  order_date?: string;
+  order_time?: string;
+  delivery_date?: string;
+  delivery_time?: string;
+  supplier_code?: number;
+  supplier_name?: string;
+  supplier_contact?: string;
+  supplier_phone?: string;
+  situation_code?: number;
+  situation?: string;
+  technician_code?: number;
+  technician_name?: string;
+  items_count: number;
+  total_qty: number;
+  products_value: number;
+  other_costs: number;
+  discount: number;
+  total_value: number;
+  payment_form?: string;
+  payment_conditions?: string;
+  is_paid: boolean;
+  invoice_number?: number;
+  invoice_date?: string;
+  observations?: string;
+  status: boolean;
+  created_at?: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchase_order_id: string;
+  order_number: number;
+  item_id?: string;
+  product_code?: number;
+  description: string;
+  reference?: string;
+  barcode?: string;
+  is_product: boolean;
+  unit: string;
+  unit_cost: number;
+  unit_price: number;
+  quantity: number;
+  discount: number;
+  discount_percent: number;
+  total: number;
+  delivery_date?: string;
+  shortage: number;
+  supplier_code?: number;
+  supplier_name?: string;
+  status: boolean;
+  notes?: string;
+  created_at: string;
+}
+
+export interface Technician {
+  id: string;
+  code: number;
+  name: string;
+  is_technician: boolean;
+  is_mechanic: boolean;
+  is_seller: boolean;
+  is_attendant: boolean;
+  commission_percent: number;
+  commission_on_products: boolean;
+  commission_on_services: boolean;
+  phone?: string;
+  cell_phone?: string;
+  email?: string;
+  cpf?: string;
+  is_active: boolean;
+  is_blocked: boolean;
+  total_sales: number;
+  total_qty: number;
+  revenue: number;
+}
+
+export interface CategorySummary {
+  category_name: string;
+  total_items: number;
+  zero_stock: number;
+  below_minimum: number;
+  total_cost_value: number;
+  total_sell_value: number;
+}
+
+export interface BelowMinimumItem {
+  id: string;
+  code: number;
+  sku?: string;
+  description: string;
+  category_name?: string;
+  brand_name?: string;
+  unit: string;
+  qty_current: number;
+  qty_minimum: number;
+  qty_needed: number;
+  cost_price: number;
+  estimated_cost: number;
+  location?: string;
+  last_purchase_date?: string;
+}
+
 export interface MaintenanceOS {
   id: string;
   company_id: string;

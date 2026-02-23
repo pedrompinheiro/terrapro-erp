@@ -1,5 +1,5 @@
 
-import { AssetStatus, OSStatus, Asset, MaintenanceOS, StockItem, Transaction, PaymentStatus, ERPDocument } from '../types';
+import { AssetStatus, OSStatus, Asset, MaintenanceOS, Transaction, PaymentStatus, ERPDocument } from '../types';
 
 export const MOCK_ASSETS: Asset[] = [
     {
@@ -90,11 +90,7 @@ export const MOCK_STATS = [
     { title: "Equipes em Campo", value: "08 Frentes", trend: "Normal", trendUp: true, iconType: "map", iconBg: "bg-slate-700" },
 ];
 
-export const MOCK_STOCK: StockItem[] = [
-    { sku: 'FIL-001', description: 'Filtro de Ar Primário', category: 'Filtros', currentQty: 12, minQty: 15, location: 'A-01', status: 'WARNING' },
-    { sku: 'OLE-15W', description: 'Óleo Motor 15W40', category: 'Lubrificantes', currentQty: 200, minQty: 100, location: 'T-01', status: 'NORMAL' },
-    { sku: 'PNE-295', description: 'Pneu 295/80 R22.5', category: 'Pneus', currentQty: 2, minQty: 4, location: 'B-02', status: 'CRITICAL' },
-];
+// MOCK_STOCK removido — migrado para Supabase (stockService.ts)
 
 export const MOCK_TRANSACTIONS: Transaction[] = [
     { id: 'FAT-001', client: 'Construtora Norte', project: 'Rodovia BR-101', dueDate: '2024-02-15', amount: 45000.00, status: PaymentStatus.PENDING },
