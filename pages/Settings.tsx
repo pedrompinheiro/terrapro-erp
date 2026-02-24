@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, UserCog, Lock, Save, Plus, Loader, Pencil, Shield, CheckCircle, XCircle, Clock, Ban, Key, Eye, EyeOff, ExternalLink, Wifi, WifiOff } from 'lucide-react';
+import { ShieldCheck, UserCog, Lock, Save, Plus, Loader, Pencil, Shield, CheckCircle, XCircle, Clock, Ban, Key, Eye, EyeOff, ExternalLink, Wifi, WifiOff, Upload, FileKey, AlertTriangle, Trash2 } from 'lucide-react';
 import Modal from '../components/Modal';
 import { supabase } from '../lib/supabase';
 
@@ -48,6 +48,22 @@ const Settings: React.FC = () => {
     const [savingKey, setSavingKey] = useState<string | null>(null);
     const [testingKey, setTestingKey] = useState<string | null>(null);
 
+    // --- Certificate State ---
+    const [certFile, setCertFile] = useState<File | null>(null);
+    const [certPassword, setCertPassword] = useState('');
+    const [certUploading, setCertUploading] = useState(false);
+    const [certTesting, setCertTesting] = useState(false);
+    const [certInfo, setCertInfo] = useState<{
+        configured: boolean;
+        cn?: string;
+        issuer?: string;
+        expiry?: string;
+        expired?: boolean;
+        days_remaining?: number;
+        error?: string;
+    } | null>(null);
+    const [certRemoving, setCertRemoving] = useState(false);
+
     // ============================================
     // Fetch Users
     // ============================================
@@ -94,9 +110,142 @@ const Settings: React.FC = () => {
         }
     };
 
+    // ============================================
+    // Certificate Functions
+    // ============================================
+
+    const fetchCertInfo = async () => {
+        try {
+            const { data, error } = await supabase.functions.invoke('nfe-consulta', {
+                body: { action: 'certInfo' },
+            });
+            if (error) {
+                console.warn('Edge Function nfe-consulta não disponível:', error.message);
+                setCertInfo(null);
+                return;
+            }
+            setCertInfo(data);
+        } catch {
+            setCertInfo(null);
+        }
+    };
+
+    const handleCertUpload = async () => {
+        if (!certFile) return alert('Selecione um arquivo .pfx/.p12');
+        if (!certPassword) return alert('Informe a senha do certificado');
+
+        setCertUploading(true);
+        try {
+            // Convert file to base64
+            const base64 = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const result = reader.result as string;
+                    resolve(result.split(',')[1] || result);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(certFile);
+            });
+
+            // Save PFX base64
+            const pfxSetting = settings.find(s => s.key === 'nfe_certificate_pfx');
+            const pwdSetting = settings.find(s => s.key === 'nfe_certificate_password');
+
+            if (!pfxSetting || !pwdSetting) {
+                throw new Error('Configurações de certificado não encontradas. Execute o SQL setup_nfe_certificate.sql primeiro.');
+            }
+
+            // Save both values
+            const { error: pfxError } = await supabase
+                .from('system_settings')
+                .update({ value: base64 })
+                .eq('id', pfxSetting.id);
+            if (pfxError) throw pfxError;
+
+            const { error: pwdError } = await supabase
+                .from('system_settings')
+                .update({ value: certPassword })
+                .eq('id', pwdSetting.id);
+            if (pwdError) throw pwdError;
+
+            // Update local state
+            setSettings(prev => prev.map(s => {
+                if (s.key === 'nfe_certificate_pfx') return { ...s, value: base64, updated_at: new Date().toISOString() };
+                if (s.key === 'nfe_certificate_password') return { ...s, value: certPassword, updated_at: new Date().toISOString() };
+                return s;
+            }));
+
+            setCertFile(null);
+            setCertPassword('');
+            alert('Certificado salvo com sucesso!');
+
+            // Refresh cert info
+            await fetchCertInfo();
+        } catch (error: any) {
+            alert('Erro ao salvar certificado: ' + error.message);
+        } finally {
+            setCertUploading(false);
+        }
+    };
+
+    const handleCertTest = async () => {
+        setCertTesting(true);
+        try {
+            const { data, error } = await supabase.functions.invoke('nfe-consulta', {
+                body: { action: 'test' },
+            });
+            if (error) throw error;
+            if (!data?.success) {
+                alert('Erro: ' + (data?.error || 'Falha no teste'));
+                return;
+            }
+            const cert = data.certificate;
+            const status = cert.expired ? 'EXPIRADO' : `Válido (${cert.days_remaining} dias restantes)`;
+            alert(
+                `Certificado OK!\n\n` +
+                `Titular: ${cert.cn}\n` +
+                `Emissor: ${cert.issuer}\n` +
+                `Validade: ${new Date(cert.expiry).toLocaleDateString('pt-BR')}\n` +
+                `Status: ${status}\n` +
+                `CNPJ configurado: ${data.cnpj_configured ? data.cnpj : 'NÃO'}`
+            );
+            setCertInfo({ configured: true, cn: cert.cn, issuer: cert.issuer, expiry: cert.expiry, expired: cert.expired, days_remaining: cert.days_remaining });
+        } catch (error: any) {
+            alert('Erro no teste: ' + error.message);
+        } finally {
+            setCertTesting(false);
+        }
+    };
+
+    const handleCertRemove = async () => {
+        if (!window.confirm('Remover o certificado digital? A consulta SEFAZ ficará indisponível.')) return;
+        setCertRemoving(true);
+        try {
+            const pfxSetting = settings.find(s => s.key === 'nfe_certificate_pfx');
+            const pwdSetting = settings.find(s => s.key === 'nfe_certificate_password');
+            if (pfxSetting) {
+                await supabase.from('system_settings').update({ value: null }).eq('id', pfxSetting.id);
+            }
+            if (pwdSetting) {
+                await supabase.from('system_settings').update({ value: null }).eq('id', pwdSetting.id);
+            }
+            setSettings(prev => prev.map(s => {
+                if (s.key === 'nfe_certificate_pfx' || s.key === 'nfe_certificate_password') return { ...s, value: null };
+                return s;
+            }));
+            setCertInfo({ configured: false });
+            alert('Certificado removido.');
+        } catch (error: any) {
+            alert('Erro ao remover: ' + error.message);
+        } finally {
+            setCertRemoving(false);
+        }
+    };
+
     useEffect(() => {
         fetchUsers();
         fetchSettings();
+        fetchCertInfo();
     }, []);
 
     // ============================================
@@ -327,12 +476,14 @@ const Settings: React.FC = () => {
     }, {});
 
     const categoryLabels: Record<string, string> = {
+        certificados: 'Certificado Digital (NF-e / SEFAZ)',
         api_keys: 'Chaves de API & Integrações',
         system: 'Parâmetros do Sistema',
         notifications: 'Notificações por Email (SMTP)',
     };
 
     const categoryIcons: Record<string, React.ReactNode> = {
+        certificados: <FileKey size={16} className="text-cyan-400" />,
         api_keys: <Key size={16} className="text-violet-400" />,
         system: <ShieldCheck size={16} className="text-blue-400" />,
         notifications: <ExternalLink size={16} className="text-amber-400" />,
@@ -587,106 +738,232 @@ const Settings: React.FC = () => {
                             </p>
                         </div>
                     ) : (
-                        Object.entries(settingsByCategory).map(([category, items]) => (
-                            <div key={category} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-                                <div className="p-5 border-b border-slate-800 flex items-center gap-3">
-                                    {categoryIcons[category] || <Key size={16} className="text-slate-400" />}
-                                    <h3 className="text-sm font-black uppercase tracking-widest text-white">
-                                        {categoryLabels[category] || category}
-                                    </h3>
-                                </div>
+                        <>
+                            {/* ===== CERTIFICADO DIGITAL (seção especial) ===== */}
+                            {settingsByCategory['certificados'] && (
+                                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                                    <div className="p-5 border-b border-slate-800 flex items-center gap-3">
+                                        <FileKey size={16} className="text-cyan-400" />
+                                        <h3 className="text-sm font-black uppercase tracking-widest text-white">
+                                            Certificado Digital A1 (NF-e / SEFAZ)
+                                        </h3>
+                                    </div>
 
-                                <div className="divide-y divide-slate-800/50">
-                                    {items.map(setting => {
-                                        const isEdited = editedValues[setting.key] !== undefined;
-                                        const currentValue = isEdited ? editedValues[setting.key] : (setting.value || '');
-                                        const isVisible = visibleKeys.has(setting.key);
-                                        const hasValue = !!(setting.value);
-
-                                        return (
-                                            <div key={setting.id} className="p-5 hover:bg-slate-800/20 transition-colors">
-                                                <div className="flex items-start justify-between gap-6">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-3 mb-1.5">
-                                                            <span className="text-sm font-bold text-white">{setting.label}</span>
-                                                            {hasValue ? (
-                                                                <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                                                    <Wifi size={9} /> Configurado
-                                                                </span>
-                                                            ) : (
-                                                                <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">
-                                                                    <WifiOff size={9} /> Não configurado
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <p className="text-xs text-slate-500 leading-relaxed">{setting.description}</p>
-                                                        <p className="text-[10px] text-slate-700 font-mono mt-1">{setting.key}</p>
+                                    <div className="p-5 space-y-5">
+                                        {/* Status do certificado */}
+                                        {certInfo?.configured ? (
+                                            <div className={`p-4 rounded-xl border flex items-start gap-4 ${
+                                                certInfo.expired
+                                                    ? 'bg-red-500/5 border-red-500/20'
+                                                    : (certInfo.days_remaining && certInfo.days_remaining < 30)
+                                                        ? 'bg-amber-500/5 border-amber-500/20'
+                                                        : 'bg-emerald-500/5 border-emerald-500/20'
+                                            }`}>
+                                                <div className={`p-2 rounded-lg ${
+                                                    certInfo.expired ? 'bg-red-500/10' : 'bg-emerald-500/10'
+                                                }`}>
+                                                    <FileKey size={20} className={certInfo.expired ? 'text-red-400' : 'text-emerald-400'} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-sm font-bold text-white">{certInfo.cn}</span>
+                                                        {certInfo.expired ? (
+                                                            <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">
+                                                                <AlertTriangle size={9} /> Expirado
+                                                            </span>
+                                                        ) : (
+                                                            <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                                <CheckCircle size={9} /> Ativo
+                                                            </span>
+                                                        )}
                                                     </div>
+                                                    <p className="text-xs text-slate-500">
+                                                        Emissor: {certInfo.issuer} | Validade: {certInfo.expiry ? new Date(certInfo.expiry).toLocaleDateString('pt-BR') : '-'}
+                                                        {certInfo.days_remaining !== undefined && !certInfo.expired && (
+                                                            <span className={certInfo.days_remaining < 30 ? ' text-amber-400 font-bold' : ''}>
+                                                                {' '}({certInfo.days_remaining} dias restantes)
+                                                            </span>
+                                                        )}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <button
+                                                        onClick={handleCertTest}
+                                                        disabled={certTesting}
+                                                        className="px-3 py-2 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center gap-1.5 disabled:opacity-50"
+                                                    >
+                                                        {certTesting ? <Loader size={12} className="animate-spin" /> : <Wifi size={12} />}
+                                                        Testar
+                                                    </button>
+                                                    <button
+                                                        onClick={handleCertRemove}
+                                                        disabled={certRemoving}
+                                                        className="px-3 py-2 rounded-lg text-xs font-bold bg-slate-800 hover:bg-red-600/20 text-slate-500 hover:text-red-400 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                                                    >
+                                                        {certRemoving ? <Loader size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="p-4 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 text-center">
+                                                <FileKey size={32} className="mx-auto mb-2 text-slate-600" />
+                                                <p className="text-sm text-slate-400 font-bold">Nenhum certificado configurado</p>
+                                                <p className="text-xs text-slate-600 mt-1">Faça upload do arquivo .pfx para habilitar consulta de NF-e na SEFAZ</p>
+                                            </div>
+                                        )}
 
-                                                    <div className="flex items-center gap-2 flex-shrink-0 w-[420px]">
-                                                        <div className="relative flex-1">
-                                                            <input
-                                                                type={setting.is_secret && !isVisible ? 'password' : 'text'}
-                                                                value={isEdited ? currentValue : (setting.is_secret && !isVisible ? maskValue(setting.value) : currentValue)}
-                                                                onChange={e => setEditedValues(prev => ({ ...prev, [setting.key]: e.target.value }))}
-                                                                onFocus={() => {
-                                                                    // Ao focar, se não tiver valor editado, limpar para digitação
-                                                                    if (!isEdited && setting.is_secret) {
-                                                                        setEditedValues(prev => ({ ...prev, [setting.key]: setting.value || '' }));
-                                                                    }
-                                                                }}
-                                                                placeholder={setting.is_secret ? '••••••••••••' : 'Não definido'}
-                                                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-white focus:border-violet-500 outline-none font-mono pr-10"
-                                                            />
-                                                            {setting.is_secret && (
+                                        {/* Upload form */}
+                                        <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 space-y-4">
+                                            <h4 className="text-xs font-bold text-slate-400 uppercase">
+                                                {certInfo?.configured ? 'Substituir Certificado' : 'Enviar Certificado'}
+                                            </h4>
+                                            <div className="grid grid-cols-[1fr_200px_auto] gap-3 items-end">
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Arquivo .pfx / .p12</label>
+                                                    <div className="relative">
+                                                        <input
+                                                            type="file"
+                                                            accept=".pfx,.p12"
+                                                            onChange={(e) => setCertFile(e.target.files?.[0] || null)}
+                                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-bold file:bg-cyan-600/20 file:text-cyan-400 hover:file:bg-cyan-600/30 focus:border-cyan-500 outline-none"
+                                                        />
+                                                    </div>
+                                                    {certFile && (
+                                                        <p className="text-[10px] text-cyan-400/70 mt-1">{certFile.name} ({(certFile.size / 1024).toFixed(1)} KB)</p>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Senha do Certificado</label>
+                                                    <input
+                                                        type="password"
+                                                        value={certPassword}
+                                                        onChange={(e) => setCertPassword(e.target.value)}
+                                                        placeholder="••••••••"
+                                                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:border-cyan-500 outline-none"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={handleCertUpload}
+                                                    disabled={!certFile || !certPassword || certUploading}
+                                                    className="px-5 py-2.5 rounded-lg text-sm font-bold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/20 transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                >
+                                                    {certUploading ? (
+                                                        <><Loader size={14} className="animate-spin" /> Salvando...</>
+                                                    ) : (
+                                                        <><Upload size={14} /> Enviar</>
+                                                    )}
+                                                </button>
+                                            </div>
+                                            <p className="text-[10px] text-slate-600 leading-relaxed">
+                                                O certificado A1 (.pfx) sera armazenado de forma segura no banco de dados e usado exclusivamente
+                                                para consulta de NF-e na SEFAZ via mTLS. Apenas certificados tipo A1 (arquivo) sao suportados.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ===== DEMAIS CATEGORIAS (exceto certificados) ===== */}
+                            {Object.entries(settingsByCategory)
+                                .filter(([category]) => category !== 'certificados')
+                                .map(([category, items]) => (
+                                <div key={category} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                                    <div className="p-5 border-b border-slate-800 flex items-center gap-3">
+                                        {categoryIcons[category] || <Key size={16} className="text-slate-400" />}
+                                        <h3 className="text-sm font-black uppercase tracking-widest text-white">
+                                            {categoryLabels[category] || category}
+                                        </h3>
+                                    </div>
+
+                                    <div className="divide-y divide-slate-800/50">
+                                        {items.filter(s => s.key !== 'nfe_certificate_pfx' && s.key !== 'nfe_certificate_password').map(setting => {
+                                            const isEdited = editedValues[setting.key] !== undefined;
+                                            const currentValue = isEdited ? editedValues[setting.key] : (setting.value || '');
+                                            const isVisible = visibleKeys.has(setting.key);
+                                            const hasValue = !!(setting.value);
+
+                                            return (
+                                                <div key={setting.id} className="p-5 hover:bg-slate-800/20 transition-colors">
+                                                    <div className="flex items-start justify-between gap-6">
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-3 mb-1.5">
+                                                                <span className="text-sm font-bold text-white">{setting.label}</span>
+                                                                {hasValue ? (
+                                                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                                        <Wifi size={9} /> Configurado
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">
+                                                                        <WifiOff size={9} /> Não configurado
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-xs text-slate-500 leading-relaxed">{setting.description}</p>
+                                                            <p className="text-[10px] text-slate-700 font-mono mt-1">{setting.key}</p>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-2 flex-shrink-0 w-[420px]">
+                                                            <div className="relative flex-1">
+                                                                <input
+                                                                    type={setting.is_secret && !isVisible ? 'password' : 'text'}
+                                                                    value={isEdited ? currentValue : (setting.is_secret && !isVisible ? maskValue(setting.value) : currentValue)}
+                                                                    onChange={e => setEditedValues(prev => ({ ...prev, [setting.key]: e.target.value }))}
+                                                                    onFocus={() => {
+                                                                        if (!isEdited && setting.is_secret) {
+                                                                            setEditedValues(prev => ({ ...prev, [setting.key]: setting.value || '' }));
+                                                                        }
+                                                                    }}
+                                                                    placeholder={setting.is_secret ? '••••••••••••' : 'Não definido'}
+                                                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-white focus:border-violet-500 outline-none font-mono pr-10"
+                                                                />
+                                                                {setting.is_secret && (
+                                                                    <button
+                                                                        onClick={() => toggleVisibility(setting.key)}
+                                                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white p-1"
+                                                                        title={isVisible ? 'Esconder' : 'Mostrar'}
+                                                                    >
+                                                                        {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+
+                                                            {setting.category === 'api_keys' && (
                                                                 <button
-                                                                    onClick={() => toggleVisibility(setting.key)}
-                                                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white p-1"
-                                                                    title={isVisible ? 'Esconder' : 'Mostrar'}
+                                                                    onClick={() => handleTestKey(setting)}
+                                                                    disabled={testingKey === setting.key}
+                                                                    className="px-3 py-2.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center gap-1 disabled:opacity-50"
+                                                                    title="Testar conexão"
                                                                 >
-                                                                    {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                                                                    {testingKey === setting.key ? <Loader size={12} className="animate-spin" /> : <Wifi size={12} />}
                                                                 </button>
                                                             )}
-                                                        </div>
 
-                                                        {/* Botão Testar */}
-                                                        {setting.category === 'api_keys' && (
                                                             <button
-                                                                onClick={() => handleTestKey(setting)}
-                                                                disabled={testingKey === setting.key}
-                                                                className="px-3 py-2.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all flex items-center gap-1 disabled:opacity-50"
-                                                                title="Testar conexão"
+                                                                onClick={() => handleSaveSetting(setting)}
+                                                                disabled={!isEdited || savingKey === setting.key}
+                                                                className={`px-3 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-30 ${
+                                                                    isEdited
+                                                                        ? 'bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20'
+                                                                        : 'bg-slate-800 text-slate-600'
+                                                                }`}
                                                             >
-                                                                {testingKey === setting.key ? <Loader size={12} className="animate-spin" /> : <Wifi size={12} />}
+                                                                {savingKey === setting.key ? <Loader size={12} className="animate-spin" /> : <Save size={12} />}
                                                             </button>
-                                                        )}
-
-                                                        {/* Botão Salvar */}
-                                                        <button
-                                                            onClick={() => handleSaveSetting(setting)}
-                                                            disabled={!isEdited || savingKey === setting.key}
-                                                            className={`px-3 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-30 ${
-                                                                isEdited
-                                                                    ? 'bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20'
-                                                                    : 'bg-slate-800 text-slate-600'
-                                                            }`}
-                                                        >
-                                                            {savingKey === setting.key ? <Loader size={12} className="animate-spin" /> : <Save size={12} />}
-                                                        </button>
+                                                        </div>
                                                     </div>
-                                                </div>
 
-                                                {setting.updated_at && hasValue && (
-                                                    <p className="text-[10px] text-slate-700 mt-2">
-                                                        Atualizado em {new Date(setting.updated_at).toLocaleString('pt-BR')}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
+                                                    {setting.updated_at && hasValue && (
+                                                        <p className="text-[10px] text-slate-700 mt-2">
+                                                            Atualizado em {new Date(setting.updated_at).toLocaleString('pt-BR')}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
-                        ))
+                            ))}
+                        </>
                     )}
                 </div>
             )}

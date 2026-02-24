@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { SupplierInvoice, SupplierInvoiceLine, PurchaseReceipt, InventoryItem } from '../../types';
 import { inventoryService } from '../../services/inventoryService';
 import Modal from '../Modal';
-import { Upload, FileText, Search, CheckCircle, AlertTriangle, X, ChevronRight, Loader2, Link, Package } from 'lucide-react';
+import { Upload, FileText, Search, CheckCircle, AlertTriangle, X, ChevronRight, Loader2, Link, Package, Download } from 'lucide-react';
 import { showToast } from '../../lib/toast';
 import { supabase } from '../../lib/supabase';
 
@@ -149,6 +149,7 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
   const [selectedReceipts, setSelectedReceipts] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [fetchingSefaz, setFetchingSefaz] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -171,6 +172,7 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
     setSelectedReceipts([]);
     setProcessing(false);
     setConfirming(false);
+    setFetchingSefaz(false);
     setDragOver(false);
     setSearchIdx(null);
     setSearchTerm('');
@@ -342,6 +344,75 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
     }
   }, [fileType, fileContent, chaveManual]);
 
+  // ---- Fetch from SEFAZ by access key ----
+  const handleFetchSefaz = useCallback(async () => {
+    if (!chaveManual || chaveManual.length !== 44) {
+      showToast.error('Informe a chave de acesso completa (44 digitos).');
+      return;
+    }
+
+    setFetchingSefaz(true);
+    try {
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('nfe-consulta', {
+        body: { action: 'consultaChNFe', chave: chaveManual },
+      });
+
+      if (fnError) throw new Error(fnError.message || 'Erro ao chamar Edge Function');
+      if (!fnData?.success) throw new Error(fnData?.error || 'Erro na consulta SEFAZ');
+
+      const parsed = fnData.data;
+      const data: ParsedNfeData = {
+        supplier: parsed.supplier_name || '',
+        supplierCnpj: parsed.supplier_cnpj || '',
+        invoiceNumber: parsed.invoice_number || '',
+        serie: parsed.serie || '',
+        chaveNfe: parsed.chave_nfe || chaveManual,
+        issueDate: parsed.issue_date || '',
+        total: parsed.total || 0,
+        items: (parsed.items || []).map((it: any) => ({
+          description: it.description || '',
+          ncm: it.ncm || '',
+          cfop: it.cfop || '',
+          ean: it.ean || '',
+          unit: it.unit || 'UN',
+          qty: it.qty || 0,
+          unitCost: it.unit_cost || 0,
+          total: it.total || 0,
+          matchedItem: undefined,
+          matchConfidence: 'NONE' as MatchConfidence,
+          needs_review: true,
+        })),
+      };
+
+      // Auto-match items by EAN then description
+      for (const item of data.items) {
+        if (item.ean && item.ean !== 'SEM GTIN' && item.ean.length > 3) {
+          const match = await inventoryService.matchProductByEan(item.ean);
+          if (match) {
+            item.matchedItem = match;
+            item.matchConfidence = 'HIGH';
+            item.needs_review = false;
+            continue;
+          }
+        }
+        const descMatches = await inventoryService.matchProductByDescription(item.description);
+        if (descMatches.length > 0) {
+          item.matchedItem = descMatches[0];
+          item.matchConfidence = descMatches.length === 1 ? 'MEDIUM' : 'LOW';
+          item.needs_review = true;
+        }
+      }
+
+      showToast.success(`NF baixada da SEFAZ! ${data.items.length} itens encontrados.`);
+      setParsedData(data);
+      setStep(2);
+    } catch (err: any) {
+      showToast.error(`Erro SEFAZ: ${err.message}`);
+    } finally {
+      setFetchingSefaz(false);
+    }
+  }, [chaveManual]);
+
   // ---- Manual item search ----
   const handleItemSearch = useCallback((term: string, idx: number) => {
     setSearchTerm(term);
@@ -506,22 +577,36 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
           {/* Manual key input */}
           <div>
             <label className="block text-xs font-semibold text-slate-400 mb-1.5">Chave NFe (44 digitos)</label>
-            <input
-              type="text"
-              maxLength={44}
-              value={chaveManual}
-              onChange={(e) => setChaveManual(e.target.value.replace(/\D/g, ''))}
-              placeholder="00000000000000000000000000000000000000000000"
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500/50"
-            />
-            <p className="text-xs text-slate-500 mt-1">{chaveManual.length}/44 digitos</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                maxLength={44}
+                value={chaveManual}
+                onChange={(e) => setChaveManual(e.target.value.replace(/\D/g, ''))}
+                placeholder="00000000000000000000000000000000000000000000"
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500/50"
+              />
+              <button
+                onClick={handleFetchSefaz}
+                disabled={fetchingSefaz || chaveManual.length !== 44}
+                className="flex items-center gap-2 px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                title="Baixar XML da SEFAZ usando certificado digital A1"
+              >
+                {fetchingSefaz ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                Buscar SEFAZ
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              {chaveManual.length}/44 digitos
+              {chaveManual.length === 44 && <span className="text-cyan-400 ml-2">— Clique em "Buscar SEFAZ" para baixar automaticamente (requer certificado A1)</span>}
+            </p>
           </div>
 
           {/* Process button */}
           <div className="flex justify-end pt-2">
             <button
               onClick={handleProcess}
-              disabled={processing || (!fileType && chaveManual.length !== 44)}
+              disabled={processing || fetchingSefaz || (!fileType && chaveManual.length !== 44)}
               className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {processing ? <Loader2 size={16} className="animate-spin" /> : <ChevronRight size={16} />}
