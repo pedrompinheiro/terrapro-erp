@@ -67,7 +67,7 @@ const Inventory: React.FC = () => {
           />
         );
       case 'MOVIMENTACOES':
-        return <MovimentacoesTab />;
+        return <MovimentacoesTab categories={categories} onRefresh={loadMeta} />;
       case 'ORDENS_SERVICO':
         return <OrdensServicoTab />;
       case 'COMPRAS':
