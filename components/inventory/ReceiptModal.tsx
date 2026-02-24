@@ -4,6 +4,7 @@ import { inventoryService } from '../../services/inventoryService';
 import Modal from '../Modal';
 import { Plus, Trash2, Save, CheckCircle, Search, X, Package, Loader2 } from 'lucide-react';
 import { showToast } from '../../lib/toast';
+import AllocationPanel from './AllocationPanel';
 
 // ============================================================
 // TYPES
@@ -566,12 +567,22 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, receipt, o
                       </div>
                     </div>
 
-                    {/* Allocation panel placeholder */}
+                    {/* Allocation panel */}
                     {item.showAllocation && (
                       <div className="px-4 py-3 bg-slate-900/50 border-b border-slate-800/50">
-                        <div className="border border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-500">
-                          Painel de Rateio - AllocationPanel
-                        </div>
+                        {item.id ? (
+                          <AllocationPanel
+                            receiptItemId={item.id}
+                            totalQty={item.qty}
+                            onChanged={() => {
+                              if (receipt?.id) loadReceiptItems(receipt.id);
+                            }}
+                          />
+                        ) : (
+                          <div className="border border-dashed border-amber-700/50 rounded-lg p-3 text-center text-xs text-amber-400/80">
+                            Salve o rascunho primeiro para habilitar o rateio deste item.
+                          </div>
+                        )}
                       </div>
                     )}
                   </React.Fragment>
