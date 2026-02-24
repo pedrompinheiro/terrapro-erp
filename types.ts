@@ -175,7 +175,10 @@ export type InventoryTab = 'ESTOQUE' | 'MOVIMENTACOES' | 'ORDENS_SERVICO' | 'COM
 export interface InventoryMovement {
   id: string;
   item_id: string;
-  movement_type: 'ENTRADA_COMPRA' | 'ENTRADA_DEVOLUCAO' | 'ENTRADA_AJUSTE' | 'SAIDA_OS' | 'SAIDA_VENDA' | 'SAIDA_AJUSTE' | 'SAIDA_PERDA' | 'TRANSFERENCIA';
+  movement_type:
+    | 'ENTRADA_COMPRA' | 'ENTRADA_DEVOLUCAO' | 'ENTRADA_AJUSTE' | 'ENTRADA_RETIRADA' | 'ENTRADA_NF'
+    | 'SAIDA_OS' | 'SAIDA_VENDA' | 'SAIDA_AJUSTE' | 'SAIDA_PERDA' | 'SAIDA_CONSUMO_INTERNO' | 'SAIDA_EQUIPAMENTO'
+    | 'TRANSFERENCIA';
   quantity: number;
   unit_cost: number;
   total_value: number;
@@ -190,11 +193,21 @@ export interface InventoryMovement {
   invoice_number?: string;
   invoice_date?: string;
   notes?: string;
+  receipt_id?: string;
+  supplier_invoice_id?: string;
+  destination_type?: 'INTERNAL_CONSUMPTION' | 'EQUIPMENT_MAINTENANCE' | 'SERVICE_ORDER' | 'WORKSITE' | 'STOCK' | 'TRANSFER' | 'SALE' | 'LOSS';
+  cost_center_id?: string;
+  equipment_id?: string;
+  service_order_id?: string;
+  hourmeter?: number;
+  responsible_technician_id?: string;
   created_at: string;
   // Joined fields
   item_description?: string;
   item_code?: number;
   item_unit?: string;
+  equipment_name?: string;
+  cost_center_name?: string;
 }
 
 export interface ServiceOrder {
@@ -508,4 +521,122 @@ export interface TimeEntry {
   status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 
   raw_ai_data?: any;
+}
+
+// ============================================================
+// MÓDULO RETIRADAS / NF FORNECEDOR
+// ============================================================
+
+export interface CostCenter {
+  id: string;
+  code: string;
+  name: string;
+  type: 'ADMIN' | 'SHOP' | 'WORKSITE' | 'ALMOX' | 'OTHER';
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface PurchaseReceipt {
+  id: string;
+  supplier_name: string;
+  supplier_id?: string;
+  purchase_order_id?: string;
+  receipt_number: string;
+  receipt_date: string;
+  status: 'DRAFT' | 'FINALIZED' | 'PENDING_INVOICE' | 'INVOICED' | 'CANCELED';
+  notes?: string;
+  finalized_at?: string;
+  finalized_by?: string;
+  created_by?: string;
+  updated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Computed (joined)
+  items_count?: number;
+  total_qty?: number;
+  estimated_total?: number;
+}
+
+export interface PurchaseReceiptItem {
+  id: string;
+  purchase_receipt_id: string;
+  inventory_item_id: string;
+  qty: number;
+  unit_cost_estimated: number;
+  notes?: string;
+  created_at?: string;
+  // Joined
+  item_description?: string;
+  item_code?: number;
+  item_unit?: string;
+}
+
+export interface PurchaseReceiptItemAllocation {
+  id: string;
+  purchase_receipt_item_id: string;
+  allocation_type: 'EQUIPMENT' | 'COST_CENTER' | 'SERVICE_ORDER' | 'STOCK';
+  equipment_id?: string;
+  cost_center_id?: string;
+  service_order_id?: string;
+  qty_allocated: number;
+  created_at?: string;
+  // Joined
+  equipment_name?: string;
+  cost_center_name?: string;
+}
+
+export interface SupplierInvoice {
+  id: string;
+  supplier_name: string;
+  invoice_number: string;
+  chave_nfe?: string;
+  serie?: string;
+  issue_date?: string;
+  due_date?: string;
+  total_invoice: number;
+  status: 'OPEN' | 'PAID' | 'CANCELED';
+  supplier_cnpj?: string;
+  xml_url?: string;
+  pdf_url?: string;
+  notes?: string;
+  created_by?: string;
+  updated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupplierInvoiceLine {
+  id: string;
+  supplier_invoice_id: string;
+  inventory_item_id?: string;
+  description?: string;
+  ncm?: string;
+  cfop?: string;
+  ean?: string;
+  unit?: string;
+  qty: number;
+  unit_cost: number;
+  total: number;
+  matched_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE' | 'MANUAL';
+  needs_review: boolean;
+  created_at?: string;
+  // Joined
+  matched_item_description?: string;
+}
+
+export interface NfeImportJob {
+  id: string;
+  file_type: 'XML' | 'PDF' | 'IMAGE' | 'CHAVE_MANUAL';
+  file_name?: string;
+  file_url?: string;
+  chave_nfe?: string;
+  status: 'PENDING' | 'PROCESSING' | 'PARSED' | 'REVIEW' | 'CONFIRMED' | 'ERROR';
+  extracted_text?: string;
+  parsed_data?: any;
+  error_message?: string;
+  confidence_score?: number;
+  supplier_invoice_id?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
 }

@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend,
 } from 'recharts';
-import { BarChart3, AlertTriangle, TrendingUp, Package, DollarSign } from 'lucide-react';
+import { BarChart3, AlertTriangle, TrendingUp, Package, DollarSign, FileText, ClipboardList, Truck } from 'lucide-react';
 
 // ============================================================
 // DARK THEME CONFIG
@@ -62,22 +62,31 @@ const RelatoriosTab: React.FC<Props> = ({ onRefresh }) => {
   const [belowMinimumItems, setBelowMinimumItems] = useState<BelowMinimumItem[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [movementHistory, setMovementHistory] = useState<MovementMonth[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState({ count: 0, estimated_total: 0 });
+  const [pendingReceiptsCount, setPendingReceiptsCount] = useState(0);
+  const [costByEquipment, setCostByEquipment] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [categories, belowMin, top, history] = await Promise.all([
+        const [categories, belowMin, top, history, piSummary, pendingRec, costEquip] = await Promise.all([
           inventoryService.getCategorySummary(),
           inventoryService.getBelowMinimumItems(),
           inventoryService.getTopUsedProducts(10),
           inventoryService.getMovementHistory(6),
+          inventoryService.getPendingInvoiceSummary(),
+          inventoryService.getPendingReceipts(),
+          inventoryService.getCostByEquipmentMonth(),
         ]);
         setCategorySummary(categories);
         setBelowMinimumItems(belowMin);
         setTopProducts(top);
         setMovementHistory(history);
+        setPendingInvoices(piSummary);
+        setPendingReceiptsCount(pendingRec.length);
+        setCostByEquipment(costEquip.slice(0, 10));
       } catch (err) {
         console.error('Erro ao carregar relatórios:', err);
       } finally {
@@ -125,6 +134,68 @@ const RelatoriosTab: React.FC<Props> = ({ onRefresh }) => {
   }
 
   return (
+    <div className="space-y-6">
+      {/* Status Cards Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500/10 rounded-xl"><FileText size={20} className="text-amber-400" /></div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">NF Pendentes</p>
+              <h3 className="text-2xl font-black text-amber-400">{pendingInvoices.count}</h3>
+              <p className="text-[10px] text-slate-500">{formatBRL(pendingInvoices.estimated_total)} estimado</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-500/10 rounded-xl"><ClipboardList size={20} className="text-blue-400" /></div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Retiradas sem NF</p>
+              <h3 className="text-2xl font-black text-blue-400">{pendingReceiptsCount}</h3>
+            </div>
+          </div>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-500/10 rounded-xl"><Truck size={20} className="text-emerald-400" /></div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Equipamentos c/ Custo</p>
+              <h3 className="text-2xl font-black text-emerald-400">{costByEquipment.length}</h3>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Cost by Equipment Table */}
+      {costByEquipment.length > 0 && (
+        <div className={PANEL}>
+          <h3 className={HEADER}><Truck size={18} /> Top Custos por Equipamento (Mes)</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  <th className="px-3 py-2">Equipamento</th>
+                  <th className="px-3 py-2">Centro Custo</th>
+                  <th className="px-3 py-2 text-right">Movimentos</th>
+                  <th className="px-3 py-2 text-right">Custo Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {costByEquipment.map((row: any, i: number) => (
+                  <tr key={i} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-3 py-2 text-xs font-bold text-white">{row.equipment_name} <span className="text-slate-500 font-mono">({row.equipment_code})</span></td>
+                    <td className="px-3 py-2 text-xs text-slate-400">{row.cost_center_name || '-'}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400 text-right">{row.movement_count}</td>
+                    <td className="px-3 py-2 text-xs text-emerald-400 text-right font-mono font-bold">{formatBRL(Number(row.total_cost) || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
       {/* Panel 1 - Estoque por Categoria (full width) */}
@@ -343,6 +414,7 @@ const RelatoriosTab: React.FC<Props> = ({ onRefresh }) => {
           </ResponsiveContainer>
         )}
       </div>
+    </div>
     </div>
   );
 };

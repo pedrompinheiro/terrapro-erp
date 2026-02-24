@@ -11,6 +11,8 @@ import {
   ServiceOrder, ServiceOrderItem, ServiceOrderStatus,
   PurchaseOrder, PurchaseOrderItem,
   Technician, CategorySummary, BelowMinimumItem,
+  CostCenter, PurchaseReceipt, PurchaseReceiptItem, PurchaseReceiptItemAllocation,
+  SupplierInvoice, SupplierInvoiceLine, NfeImportJob, Asset,
 } from '../types';
 
 // ============================================================
@@ -799,5 +801,363 @@ export const inventoryService = {
     return Array.from(monthMap.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([month, data]) => ({ month, ...data }));
+  },
+
+  // ==================== COST CENTERS ====================
+
+  getCostCenters: async (type?: string): Promise<CostCenter[]> => {
+    let query = supabase.from('cost_centers').select('*').eq('is_active', true).order('name');
+    if (type) query = query.eq('type', type);
+    const { data, error } = await query;
+    if (error) { console.error('Erro ao buscar centros de custo:', error); return []; }
+    return data || [];
+  },
+
+  createCostCenter: async (cc: Partial<CostCenter>): Promise<CostCenter | null> => {
+    const { data, error } = await supabase.from('cost_centers').insert(cc).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  updateCostCenter: async (id: string, updates: Partial<CostCenter>): Promise<CostCenter | null> => {
+    const { data, error } = await supabase.from('cost_centers').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  // ==================== EQUIPMENTS (autocomplete) ====================
+
+  getEquipments: async (search?: string): Promise<Asset[]> => {
+    let query = supabase.from('assets').select('id, code, name, model, brand, status, current_cost_center_id, default_cost_center_id').order('name');
+    if (search) {
+      const term = `%${search}%`;
+      query = query.or(`name.ilike.${term},code.ilike.${term},model.ilike.${term}`);
+    }
+    const { data, error } = await query.limit(50);
+    if (error) { console.error('Erro ao buscar equipamentos:', error); return []; }
+    return (data || []) as unknown as Asset[];
+  },
+
+  // ==================== PURCHASE RECEIPTS (Retiradas) ====================
+
+  getPurchaseReceipts: async (params?: {
+    search?: string; status?: string; dateFrom?: string; dateTo?: string; page?: number; pageSize?: number;
+  }): Promise<{ data: PurchaseReceipt[]; count: number }> => {
+    const page = params?.page || 1;
+    const pageSize = params?.pageSize || 50;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase.from('purchase_receipts').select('*', { count: 'exact' })
+      .order('receipt_date', { ascending: false }).range(from, to);
+
+    if (params?.search) {
+      const term = `%${params.search}%`;
+      query = query.or(`supplier_name.ilike.${term},receipt_number.ilike.${term}`);
+    }
+    if (params?.status) query = query.eq('status', params.status);
+    if (params?.dateFrom) query = query.gte('receipt_date', params.dateFrom);
+    if (params?.dateTo) query = query.lte('receipt_date', params.dateTo);
+
+    const { data, error, count } = await query;
+    if (error) { console.error('Erro ao buscar retiradas:', error); return { data: [], count: 0 }; }
+
+    // Enrich with items count
+    if (data && data.length > 0) {
+      const ids = data.map((r: any) => r.id);
+      const { data: itemsData } = await supabase
+        .from('purchase_receipt_items')
+        .select('purchase_receipt_id, qty, unit_cost_estimated')
+        .in('purchase_receipt_id', ids);
+
+      const itemsMap = new Map<string, { count: number; totalQty: number; totalValue: number }>();
+      (itemsData || []).forEach((i: any) => {
+        const current = itemsMap.get(i.purchase_receipt_id) || { count: 0, totalQty: 0, totalValue: 0 };
+        current.count++;
+        current.totalQty += Number(i.qty) || 0;
+        current.totalValue += (Number(i.qty) || 0) * (Number(i.unit_cost_estimated) || 0);
+        itemsMap.set(i.purchase_receipt_id, current);
+      });
+
+      return {
+        data: data.map((r: any) => {
+          const stats = itemsMap.get(r.id);
+          return { ...r, items_count: stats?.count || 0, total_qty: stats?.totalQty || 0, estimated_total: stats?.totalValue || 0 };
+        }),
+        count: count || 0,
+      };
+    }
+    return { data: data || [], count: count || 0 };
+  },
+
+  getPurchaseReceiptById: async (id: string): Promise<PurchaseReceipt | null> => {
+    const { data, error } = await supabase.from('purchase_receipts').select('*').eq('id', id).single();
+    if (error) { console.error('Erro ao buscar retirada:', error); return null; }
+    return data;
+  },
+
+  getReceiptItems: async (receiptId: string): Promise<PurchaseReceiptItem[]> => {
+    const { data, error } = await supabase
+      .from('purchase_receipt_items').select('*').eq('purchase_receipt_id', receiptId).order('created_at');
+    if (error) { console.error('Erro ao buscar itens da retirada:', error); return []; }
+
+    if (data && data.length > 0) {
+      const itemIds = [...new Set(data.map((i: any) => i.inventory_item_id))];
+      const { data: items } = await supabase.from('inventory_items').select('id, code, description, unit').in('id', itemIds);
+      const itemMap = new Map((items || []).map((i: any) => [i.id, i]));
+      return data.map((ri: any) => {
+        const item = itemMap.get(ri.inventory_item_id);
+        return { ...ri, item_description: item?.description, item_code: item?.code, item_unit: item?.unit };
+      });
+    }
+    return data || [];
+  },
+
+  getReceiptAllocations: async (receiptItemId: string): Promise<PurchaseReceiptItemAllocation[]> => {
+    const { data, error } = await supabase
+      .from('purchase_receipt_item_allocations').select('*').eq('purchase_receipt_item_id', receiptItemId).order('created_at');
+    if (error) { console.error('Erro ao buscar alocacoes:', error); return []; }
+
+    if (data && data.length > 0) {
+      const equipIds = data.filter((a: any) => a.equipment_id).map((a: any) => a.equipment_id);
+      const ccIds = data.filter((a: any) => a.cost_center_id).map((a: any) => a.cost_center_id);
+
+      const [equipRes, ccRes] = await Promise.all([
+        equipIds.length > 0 ? supabase.from('assets').select('id, name').in('id', equipIds) : { data: [] },
+        ccIds.length > 0 ? supabase.from('cost_centers').select('id, name').in('id', ccIds) : { data: [] },
+      ]);
+
+      const equipMap = new Map((equipRes.data || []).map((e: any) => [e.id, e.name]));
+      const ccMap = new Map((ccRes.data || []).map((c: any) => [c.id, c.name]));
+
+      return data.map((a: any) => ({
+        ...a,
+        equipment_name: a.equipment_id ? equipMap.get(a.equipment_id) : undefined,
+        cost_center_name: a.cost_center_id ? ccMap.get(a.cost_center_id) : undefined,
+      }));
+    }
+    return data || [];
+  },
+
+  createPurchaseReceipt: async (receipt: Partial<PurchaseReceipt>): Promise<PurchaseReceipt | null> => {
+    const { data, error } = await supabase.from('purchase_receipts').insert(receipt).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  updatePurchaseReceipt: async (id: string, updates: Partial<PurchaseReceipt>): Promise<PurchaseReceipt | null> => {
+    const { data, error } = await supabase.from('purchase_receipts')
+      .update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  addReceiptItem: async (item: { purchase_receipt_id: string; inventory_item_id: string; qty: number; unit_cost_estimated?: number; notes?: string }): Promise<PurchaseReceiptItem | null> => {
+    const { data, error } = await supabase.from('purchase_receipt_items').insert(item).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  updateReceiptItem: async (id: string, updates: Partial<PurchaseReceiptItem>): Promise<PurchaseReceiptItem | null> => {
+    const { data, error } = await supabase.from('purchase_receipt_items').update(updates).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  deleteReceiptItem: async (id: string): Promise<boolean> => {
+    const { error } = await supabase.from('purchase_receipt_items').delete().eq('id', id);
+    if (error) { console.error('Erro ao excluir item:', error); return false; }
+    return true;
+  },
+
+  upsertAllocation: async (alloc: Partial<PurchaseReceiptItemAllocation>): Promise<PurchaseReceiptItemAllocation | null> => {
+    if (alloc.id) {
+      const { data, error } = await supabase.from('purchase_receipt_item_allocations').update(alloc).eq('id', alloc.id).select().single();
+      if (error) throw new Error(error.message);
+      return data;
+    }
+    const { data, error } = await supabase.from('purchase_receipt_item_allocations').insert(alloc).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  deleteAllocation: async (id: string): Promise<boolean> => {
+    const { error } = await supabase.from('purchase_receipt_item_allocations').delete().eq('id', id);
+    if (error) { console.error('Erro ao excluir alocacao:', error); return false; }
+    return true;
+  },
+
+  finalizeReceipt: async (receiptId: string): Promise<any> => {
+    const { data, error } = await supabase.rpc('finalize_receipt', { p_receipt_id: receiptId });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  cancelReceipt: async (receiptId: string): Promise<boolean> => {
+    const { error } = await supabase.from('purchase_receipts')
+      .update({ status: 'CANCELED', updated_at: new Date().toISOString() }).eq('id', receiptId);
+    if (error) throw new Error(error.message);
+    return true;
+  },
+
+  getReceiptStats: async (): Promise<{ total: number; drafts: number; pendingInvoice: number; estimatedPending: number }> => {
+    const { count: total } = await supabase.from('purchase_receipts').select('*', { count: 'exact', head: true });
+    const { count: drafts } = await supabase.from('purchase_receipts').select('*', { count: 'exact', head: true }).eq('status', 'DRAFT');
+    const { data: pendingData } = await supabase.from('v_pending_invoices').select('estimated_total');
+    const pendingInvoice = pendingData?.length || 0;
+    const estimatedPending = (pendingData || []).reduce((s, r) => s + (Number(r.estimated_total) || 0), 0);
+    return { total: total || 0, drafts: drafts || 0, pendingInvoice, estimatedPending: Math.round(estimatedPending * 100) / 100 };
+  },
+
+  // ==================== SUPPLIER INVOICES (NF Fornecedor) ====================
+
+  getSupplierInvoices: async (params?: {
+    search?: string; status?: string; dateFrom?: string; dateTo?: string; page?: number; pageSize?: number;
+  }): Promise<{ data: SupplierInvoice[]; count: number }> => {
+    const page = params?.page || 1;
+    const pageSize = params?.pageSize || 50;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase.from('supplier_invoices').select('*', { count: 'exact' })
+      .order('created_at', { ascending: false }).range(from, to);
+
+    if (params?.search) {
+      const term = `%${params.search}%`;
+      query = query.or(`supplier_name.ilike.${term},invoice_number.ilike.${term},chave_nfe.ilike.${term}`);
+    }
+    if (params?.status) query = query.eq('status', params.status);
+    if (params?.dateFrom) query = query.gte('issue_date', params.dateFrom);
+    if (params?.dateTo) query = query.lte('issue_date', params.dateTo);
+
+    const { data, error, count } = await query;
+    if (error) { console.error('Erro ao buscar NFs:', error); return { data: [], count: 0 }; }
+    return { data: data || [], count: count || 0 };
+  },
+
+  getSupplierInvoiceById: async (id: string): Promise<SupplierInvoice | null> => {
+    const { data, error } = await supabase.from('supplier_invoices').select('*').eq('id', id).single();
+    if (error) { console.error('Erro ao buscar NF:', error); return null; }
+    return data;
+  },
+
+  getInvoiceLines: async (invoiceId: string): Promise<SupplierInvoiceLine[]> => {
+    const { data, error } = await supabase.from('supplier_invoice_lines').select('*').eq('supplier_invoice_id', invoiceId).order('created_at');
+    if (error) { console.error('Erro ao buscar linhas NF:', error); return []; }
+
+    if (data && data.length > 0) {
+      const itemIds = data.filter((l: any) => l.inventory_item_id).map((l: any) => l.inventory_item_id);
+      if (itemIds.length > 0) {
+        const { data: items } = await supabase.from('inventory_items').select('id, description').in('id', itemIds);
+        const itemMap = new Map((items || []).map((i: any) => [i.id, i.description]));
+        return data.map((l: any) => ({ ...l, matched_item_description: l.inventory_item_id ? itemMap.get(l.inventory_item_id) : undefined }));
+      }
+    }
+    return data || [];
+  },
+
+  createSupplierInvoice: async (invoice: Partial<SupplierInvoice>): Promise<SupplierInvoice | null> => {
+    const { data, error } = await supabase.from('supplier_invoices').insert(invoice).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  updateInvoiceLine: async (id: string, updates: Partial<SupplierInvoiceLine>): Promise<SupplierInvoiceLine | null> => {
+    const { data, error } = await supabase.from('supplier_invoice_lines').update(updates).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  createInvoiceLines: async (lines: Partial<SupplierInvoiceLine>[]): Promise<SupplierInvoiceLine[]> => {
+    const { data, error } = await supabase.from('supplier_invoice_lines').insert(lines).select();
+    if (error) throw new Error(error.message);
+    return data || [];
+  },
+
+  linkInvoiceToReceipts: async (invoiceId: string, receiptIds: string[]): Promise<boolean> => {
+    const links = receiptIds.map(rid => ({ supplier_invoice_id: invoiceId, purchase_receipt_id: rid }));
+    const { error } = await supabase.from('supplier_invoice_receipt_links').insert(links);
+    if (error) throw new Error(error.message);
+    return true;
+  },
+
+  getLinkedReceipts: async (invoiceId: string): Promise<PurchaseReceipt[]> => {
+    const { data: links } = await supabase.from('supplier_invoice_receipt_links').select('purchase_receipt_id').eq('supplier_invoice_id', invoiceId);
+    if (!links || links.length === 0) return [];
+    const ids = links.map((l: any) => l.purchase_receipt_id);
+    const { data } = await supabase.from('purchase_receipts').select('*').in('id', ids);
+    return data || [];
+  },
+
+  confirmNfEntry: async (invoiceId: string): Promise<any> => {
+    const { data, error } = await supabase.rpc('confirm_nf_entry', { p_invoice_id: invoiceId });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  getPendingReceipts: async (supplierName?: string): Promise<PurchaseReceipt[]> => {
+    let query = supabase.from('purchase_receipts').select('*').eq('status', 'PENDING_INVOICE').order('receipt_date', { ascending: false });
+    if (supplierName) query = query.ilike('supplier_name', `%${supplierName}%`);
+    const { data, error } = await query;
+    if (error) { console.error('Erro ao buscar retiradas pendentes:', error); return []; }
+    return data || [];
+  },
+
+  // ==================== NFE IMPORT JOBS ====================
+
+  createImportJob: async (job: Partial<NfeImportJob>): Promise<NfeImportJob | null> => {
+    const { data, error } = await supabase.from('nfe_import_jobs').insert(job).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  updateImportJob: async (id: string, updates: Partial<NfeImportJob>): Promise<NfeImportJob | null> => {
+    const { data, error } = await supabase.from('nfe_import_jobs').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  // ==================== PRODUCT MATCHING (para NF) ====================
+
+  matchProductByEan: async (ean: string): Promise<InventoryItem | null> => {
+    const { data } = await supabase.from('inventory_items').select('*').eq('barcode', ean).eq('active', true).limit(1).single();
+    return data ? enrichItem(data) : null;
+  },
+
+  matchProductBySku: async (sku: string): Promise<InventoryItem | null> => {
+    const { data } = await supabase.from('inventory_items').select('*').eq('sku', sku).eq('active', true).limit(1).single();
+    return data ? enrichItem(data) : null;
+  },
+
+  matchProductByDescription: async (desc: string): Promise<InventoryItem[]> => {
+    const term = `%${desc}%`;
+    const { data } = await supabase.from('inventory_items').select('*').ilike('description', term).eq('active', true).limit(5);
+    return (data || []).map(enrichItem);
+  },
+
+  // ==================== REPORT VIEWS ====================
+
+  getPendingInvoiceSummary: async (): Promise<{ count: number; estimated_total: number }> => {
+    const { data } = await supabase.from('v_pending_invoices').select('estimated_total');
+    return {
+      count: data?.length || 0,
+      estimated_total: (data || []).reduce((s, r) => s + (Number(r.estimated_total) || 0), 0),
+    };
+  },
+
+  getCostByEquipmentMonth: async (month?: string): Promise<any[]> => {
+    let query = supabase.from('v_cost_by_equipment_month').select('*');
+    if (month) query = query.eq('month', month);
+    const { data, error } = await query.limit(50);
+    if (error) { console.error('Erro ao buscar custo por equipamento:', error); return []; }
+    return data || [];
+  },
+
+  getCostByCostCenterMonth: async (month?: string): Promise<any[]> => {
+    let query = supabase.from('v_cost_by_cost_center_month').select('*');
+    if (month) query = query.eq('month', month);
+    const { data, error } = await query.limit(50);
+    if (error) { console.error('Erro ao buscar custo por centro:', error); return []; }
+    return data || [];
   },
 };

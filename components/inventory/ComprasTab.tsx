@@ -1,13 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { PurchaseOrder, PurchaseOrderItem } from '../../types';
+import { PurchaseOrder, PurchaseOrderItem, PurchaseReceipt } from '../../types';
 import { inventoryService } from '../../services/inventoryService';
 import Modal from '../Modal';
+import RetiradasSubTab from './RetiradasSubTab';
+import ReceiptModal from './ReceiptModal';
+import NotasFiscaisSubTab from './NotasFiscaisSubTab';
 import {
   Search, ShoppingCart, Filter, ChevronLeft, ChevronRight, X,
   DollarSign, Truck, Calendar, CheckCircle, XCircle, Package, Phone, User,
+  FileText, ClipboardList,
 } from 'lucide-react';
 
 const PAGE_SIZE = 50;
+
+type ComprasSubTab = 'PEDIDOS' | 'RETIRADAS' | 'NOTAS_FISCAIS';
 
 interface ComprasTabProps {
   onRefresh?: () => void;
@@ -23,6 +29,10 @@ const formatDate = (d?: string) => {
 };
 
 const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
+  const [subTab, setSubTab] = useState<ComprasSubTab>('PEDIDOS');
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [selectedReceipt, setSelectedReceipt] = useState<PurchaseReceipt | null>(null);
+  const [retiradasKey, setRetiradasKey] = useState(0);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
@@ -118,8 +128,52 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
     );
   };
 
+  const openReceiptModal = (receipt?: PurchaseReceipt) => {
+    setSelectedReceipt(receipt || null);
+    setReceiptModalOpen(true);
+  };
+
+  const handleReceiptSaved = () => {
+    setReceiptModalOpen(false);
+    setSelectedReceipt(null);
+    setRetiradasKey(k => k + 1);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Sub-Tab Navigation */}
+      <div className="flex bg-slate-900 border border-slate-800 rounded-2xl p-1 gap-1">
+        {([
+          { key: 'PEDIDOS' as ComprasSubTab, label: 'Pedidos de Compra', icon: ShoppingCart },
+          { key: 'RETIRADAS' as ComprasSubTab, label: 'Retiradas', icon: ClipboardList },
+          { key: 'NOTAS_FISCAIS' as ComprasSubTab, label: 'Notas Fiscais', icon: FileText },
+        ]).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setSubTab(tab.key)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-1 justify-center ${
+              subTab === tab.key
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <tab.icon size={16} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sub-Tab Content */}
+      {subTab === 'RETIRADAS' && (
+        <RetiradasSubTab key={retiradasKey} onOpenReceipt={openReceiptModal} />
+      )}
+
+      {subTab === 'NOTAS_FISCAIS' && (
+        <NotasFiscaisSubTab />
+      )}
+
+      {subTab === 'PEDIDOS' && (
+      <>
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
@@ -549,6 +603,16 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
           </div>
         )}
       </Modal>
+      </>
+      )}
+
+      {/* Receipt Modal (shared across sub-tabs) */}
+      <ReceiptModal
+        isOpen={receiptModalOpen}
+        onClose={() => { setReceiptModalOpen(false); setSelectedReceipt(null); }}
+        receipt={selectedReceipt}
+        onSaved={handleReceiptSaved}
+      />
     </div>
   );
 };
