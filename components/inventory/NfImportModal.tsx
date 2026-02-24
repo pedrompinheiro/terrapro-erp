@@ -4,6 +4,7 @@ import { inventoryService } from '../../services/inventoryService';
 import Modal from '../Modal';
 import { Upload, FileText, Search, CheckCircle, AlertTriangle, X, ChevronRight, Loader2, Link, Package } from 'lucide-react';
 import { showToast } from '../../lib/toast';
+import { supabase } from '../../lib/supabase';
 
 // ============================================================
 // TYPES
@@ -204,7 +205,15 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
       reader.onload = (e) => setFileContent(e.target?.result as string || '');
       reader.readAsText(file);
     } else {
-      setFileContent('');
+      // PDF/Image: read as base64
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string || '';
+        // Remove data URL prefix to get raw base64
+        const base64 = result.split(',')[1] || result;
+        setFileContent(base64);
+      };
+      reader.readAsDataURL(file);
     }
   }, []);
 
@@ -252,8 +261,66 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
         }
         setParsedData(data);
         setStep(2);
-      } else if (fileType === 'PDF' || fileType === 'IMAGE') {
-        showToast.error('Processamento de PDF/Imagem requer Edge Function nfe-parser (em desenvolvimento)');
+      } else if ((fileType === 'PDF' || fileType === 'IMAGE') && fileContent) {
+        // Call nfe-parser Edge Function
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('nfe-parser', {
+          body: {
+            type: fileType === 'PDF' ? 'pdf' : 'image',
+            content: fileContent,
+            file_name: fileName,
+          },
+        });
+
+        if (fnError || !fnData?.success) {
+          throw new Error(fnData?.error || fnError?.message || 'Erro ao processar arquivo');
+        }
+
+        const parsed = fnData.data;
+        const data: ParsedNfeData = {
+          supplier: parsed.supplier_name || '',
+          supplierCnpj: parsed.supplier_cnpj || '',
+          invoiceNumber: parsed.invoice_number || '',
+          serie: parsed.serie || '',
+          chaveNfe: parsed.chave_nfe || '',
+          issueDate: parsed.issue_date || '',
+          total: parsed.total || 0,
+          items: (parsed.items || []).map((it: any) => ({
+            description: it.description || '',
+            ncm: it.ncm || '',
+            cfop: it.cfop || '',
+            ean: it.ean || '',
+            unit: it.unit || 'UN',
+            qty: it.qty || 0,
+            unitCost: it.unit_cost || 0,
+            total: it.total || 0,
+            matchedItem: null,
+            matchConfidence: 'NONE' as MatchConfidence,
+            needs_review: true,
+          })),
+        };
+
+        // Auto-match items by EAN then description
+        for (const item of data.items) {
+          if (item.ean && item.ean !== 'SEM GTIN' && item.ean.length > 3) {
+            const match = await inventoryService.matchProductByEan(item.ean);
+            if (match) {
+              item.matchedItem = match;
+              item.matchConfidence = 'MEDIUM'; // Lower than XML since AI-extracted
+              item.needs_review = true;
+              continue;
+            }
+          }
+          const descMatches = await inventoryService.matchProductByDescription(item.description);
+          if (descMatches.length > 0) {
+            item.matchedItem = descMatches[0];
+            item.matchConfidence = 'LOW';
+            item.needs_review = true;
+          }
+        }
+
+        showToast.success(`NF processada via ${fileType === 'PDF' ? 'PDF' : 'Imagem'} (confianca: ${fnData.confidence}%)`);
+        setParsedData(data);
+        setStep(2);
       } else if (chaveManual && chaveManual.length === 44) {
         setParsedData({
           supplier: '',
