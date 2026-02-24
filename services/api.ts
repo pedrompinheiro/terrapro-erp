@@ -1,5 +1,5 @@
-import { Asset, MaintenanceOS, StockItem, Transaction, AssetStatus, OSStatus, PaymentStatus, ERPDocument, AuditLogEntry, NetworkSession } from '../types';
-import { MOCK_ACTIVITIES, MOCK_ASSETS, MOCK_STATS, MOCK_STOCK, MOCK_TRANSACTIONS, MOCK_MAINTENANCE_OS, MOCK_PAYROLL_DATA, MOCK_OPERATIONS_MAP_DATA, MOCK_DOCUMENTS, MOCK_AUDIT_LOGS, MOCK_SESSIONS, TimeRecord, PayrollEntry, EquipmentTimeline } from './mockData';
+import { Asset, MaintenanceOS, Transaction, AssetStatus, OSStatus, PaymentStatus, ERPDocument, AuditLogEntry, NetworkSession } from '../types';
+import { MOCK_ACTIVITIES, MOCK_ASSETS, MOCK_STATS, MOCK_TRANSACTIONS, MOCK_MAINTENANCE_OS, MOCK_PAYROLL_DATA, MOCK_OPERATIONS_MAP_DATA, MOCK_DOCUMENTS, MOCK_AUDIT_LOGS, MOCK_SESSIONS, TimeRecord, PayrollEntry, EquipmentTimeline } from './mockData';
 import { supabase } from '../lib/supabase';
 
 const DELAY = 400; // Faster for better UX
@@ -7,7 +7,6 @@ const DELAY = 400; // Faster for better UX
 // In-Memory Database
 let _assets = [...MOCK_ASSETS];
 let _maintenanceOS = [...MOCK_MAINTENANCE_OS];
-let _stock = [...MOCK_STOCK];
 let _transactions = [...MOCK_TRANSACTIONS];
 // let _timeRecords = [...MOCK_TIME_RECORDS]; // Removido, usando Supabase agora
 let _payrollData = [...MOCK_PAYROLL_DATA];
@@ -51,22 +50,7 @@ export const dashboardService = {
         return new Promise(resolve => setTimeout(() => resolve(true), DELAY));
     },
 
-    // Stock
-    getStock: async (): Promise<StockItem[]> => {
-        return new Promise(resolve => setTimeout(() => resolve([..._stock]), DELAY));
-    },
-    addStockItem: async (item: StockItem) => {
-        _stock.push(item);
-        return new Promise(resolve => setTimeout(() => resolve(item), DELAY));
-    },
-    updateStockItem: async (updatedItem: StockItem) => {
-        _stock = _stock.map(s => s.sku === updatedItem.sku ? updatedItem : s);
-        return new Promise(resolve => setTimeout(() => resolve(updatedItem), DELAY));
-    },
-    deleteStockItem: async (sku: string) => {
-        _stock = _stock.filter(s => s.sku !== sku);
-        return new Promise(resolve => setTimeout(() => resolve(true), DELAY));
-    },
+    // Stock — migrado para stockService.ts (Supabase)
 
     // Financial
     getTransactions: async (): Promise<Transaction[]> => {

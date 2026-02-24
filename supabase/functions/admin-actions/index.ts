@@ -100,6 +100,16 @@ Deno.serve(async (req: Request) => {
             });
         }
 
+        // 5b. Debug: listar todos user_profiles
+        if (action === 'debugProfiles') {
+            const { data, error } = await supabaseAdmin
+                .from('user_profiles')
+                .select('*');
+            return new Response(JSON.stringify({ profiles: data, error }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
         // 5. Aprovar / Bloquear Usuário (atualiza user_profiles.status)
         if (action === 'setUserStatus') {
             const { userId, status } = payload; // status: 'APPROVED' | 'BLOCKED' | 'PENDING'

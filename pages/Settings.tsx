@@ -110,14 +110,26 @@ const Settings: React.FC = () => {
         if (!window.confirm(`Confirma ${label} este usuário?`)) return;
 
         try {
+            // Tenta via Edge Function primeiro
             const { data, error } = await supabase.functions.invoke('admin-actions', {
                 body: { action: 'setUserStatus', payload: { userId, status } }
             });
             if (error) throw error;
             if (data?.error) throw new Error(data.error);
             setUsers(prev => prev.map(u => u.id === userId ? { ...u, profileStatus: status } : u));
-        } catch (error: any) {
-            alert('Erro ao alterar status: ' + error.message);
+        } catch (edgeFnError: any) {
+            console.warn('Edge Function falhou, tentando fallback direto:', edgeFnError.message);
+            // Fallback: atualiza direto pela tabela user_profiles
+            try {
+                const { error: directError } = await supabase
+                    .from('user_profiles')
+                    .update({ status })
+                    .eq('id', userId);
+                if (directError) throw directError;
+                setUsers(prev => prev.map(u => u.id === userId ? { ...u, profileStatus: status } : u));
+            } catch (directErr: any) {
+                alert('Erro ao alterar status: ' + directErr.message);
+            }
         }
     };
 
