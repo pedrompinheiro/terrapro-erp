@@ -507,8 +507,15 @@ Equipe Financeira
     }
 
     private async enviarWhatsApp(telefone: string, mensagem: string, anexo?: string) {
-        // TODO: Integrar com Evolution API
-        console.log('WhatsApp enviado para:', telefone);
+        const { evolutionService } = await import('./evolutionService');
+
+        // Envia texto da cobranca
+        await evolutionService.sendText(telefone, mensagem);
+
+        // Se tiver anexo (boleto PDF como URL ou base64), envia como documento
+        if (anexo) {
+            await evolutionService.sendMedia(telefone, anexo, 'Boleto em anexo', 'document', 'boleto.pdf');
+        }
     }
 }
 
