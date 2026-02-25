@@ -6,7 +6,7 @@ export const analyzeFleetEfficiency = async (data: any) => {
   const ai = getAI();
   try {
     const model = ai.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash',
       systemInstruction: "Você é um especialista sênior em logística de frotas pesadas e terraplanagem. Seja conciso e técnico."
     });
 

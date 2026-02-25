@@ -117,7 +117,7 @@ export const processTimecardImage = async (file: File): Promise<TimecardData> =>
     const base64Data = await fileToBase64(file);
 
     const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = buildOcrPrompt();
 
