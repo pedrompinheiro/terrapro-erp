@@ -33,6 +33,7 @@ interface Employee {
     id: string;
     name: string;
     registration_number: string;
+    company_id?: string;
 }
 
 interface OcrCard {
@@ -72,7 +73,7 @@ const Timekeeping: React.FC = () => {
         const fetchEmployees = async () => {
             const { data, error } = await supabase
                 .from('employees')
-                .select('id, full_name, registration_number')
+                .select('id, full_name, registration_number, company_id')
                 .eq('active', true)
                 .order('full_name');
 
@@ -80,7 +81,8 @@ const Timekeeping: React.FC = () => {
                 setEmployees(data.map((e: any) => ({
                     id: e.id,
                     name: e.full_name || 'Sem Nome',
-                    registration_number: e.registration_number || ''
+                    registration_number: e.registration_number || '',
+                    company_id: e.company_id
                 })));
             }
         };
@@ -316,6 +318,12 @@ const Timekeeping: React.FC = () => {
         const cardsToSave = cards.filter(
             c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0
         );
+        console.log('[SAVE] Cards to save:', cardsToSave.length, cardsToSave.map(c => ({
+            emp: c.matchedEmployeeName,
+            empId: c.matchedEmployeeId,
+            days: c.selectedDays.size,
+            status: c.status
+        })));
         setTotalToSave(cardsToSave.reduce((sum, c) => sum + c.selectedDays.size, 0));
 
         let count = 0;
@@ -323,23 +331,40 @@ const Timekeeping: React.FC = () => {
 
         for (let i = 0; i < updated.length; i++) {
             const card = updated[i];
-            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) continue;
+            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) {
+                console.log(`[SAVE] Skipping card ${i}: status=${card.status}, empId=${card.matchedEmployeeId}, days=${card.selectedDays?.size}`);
+                continue;
+            }
+
+            // Pegar mês/ano correto: override > OCR > atual
+            const saveMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+            const saveYear = card.overrideYear || card.data?.year || new Date().getFullYear();
 
             const entries = (card.editedEntries || card.data?.entries || [])
-                .filter(e => card.selectedDays.has(e.day));
+                .filter(e => card.selectedDays.has(e.day))
+                .map(e => ({
+                    ...e,
+                    // SEMPRE recalcular a data com mês/ano correto
+                    date: `${saveYear}-${String(saveMonth).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                }));
 
-            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId);
+            const emp = employees.find(e => e.id === card.matchedEmployeeId);
+            console.log(`[SAVE] Card ${i}: emp=${emp?.name}, company_id=${emp?.company_id}, month=${saveMonth}/${saveYear}, entries=${entries.length}`);
+            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId, emp?.company_id);
+            console.log(`[SAVE] Records to upsert:`, records.length, records.length > 0 ? records[0] : 'EMPTY');
 
             let allOk = true;
             for (const record of records) {
-                const { error } = await supabase
+                console.log(`[SAVE] Upserting:`, JSON.stringify(record));
+                const { error, data } = await supabase
                     .from('time_entries')
                     .upsert(record, { onConflict: 'employee_id,date' as any });
 
                 if (error) {
-                    console.error('Erro ao salvar:', record.date, error);
+                    console.error('[SAVE] ERRO ao salvar:', record.date, JSON.stringify(error));
                     allOk = false;
                 } else {
+                    console.log(`[SAVE] OK: ${record.date}`, data);
                     count++;
                     setSavedCount(count);
                 }

@@ -325,12 +325,14 @@ const levenshtein = (a: string, b: string): number => {
 /** Converte dados OCR para formato de upsert no time_entries */
 export const ocrEntriesToTimeEntries = (
     entries: TimecardEntry[],
-    employeeId: string
+    employeeId: string,
+    companyId?: string
 ) => {
     return entries
         .filter(e => e.entrada1 || e.saida1 || e.entrada2 || e.saida2)  // Pular dias totalmente vazios
         .map(e => ({
             employee_id: employeeId,
+            company_id: companyId || undefined,
             date: e.date,
             entry_time: e.entrada1,
             break_start: e.saida1,
