@@ -2,13 +2,14 @@
  * TERRAPRO ERP - WhatsApp Webhook Edge Function
  *
  * Recebe webhooks da Evolution API (mensagens, grupos, status de conexao).
- * Grava mensagens no Supabase e analisa com Gemini AI para detectar
+ * Grava mensagens no Supabase e analisa com IA (multi-provider) para detectar
  * intencao, urgencia, equipamento mencionado e acao sugerida.
  *
  * Deploy: supabase functions deploy whatsapp-webhook --no-verify-jwt
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { analyzeText } from '../_shared/aiHelper.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,9 +27,9 @@ function getSupabase() {
 }
 
 // ---------------------------------------------------------------------------
-// GEMINI AI ANALYSIS
+// AI ANALYSIS (multi-provider via aiHelper)
 // ---------------------------------------------------------------------------
-async function analyzeWithGemini(content: string, geminiKey: string) {
+async function analyzeMessage(content: string, supabase: any) {
   const prompt = `Voce e um assistente de uma empresa de terraplenagem e transporte pesado (Transportadora Terra LTDA, Dourados/MS).
 A empresa opera escavadeiras, pas carregadeiras, tratores, caminhoes, patrolas e outros equipamentos pesados.
 Codigos de equipamento: ME=Escavadeira, MC=Pa Carregadeira, RT=Trator, CM=Caminhao, PT=Patrola.
@@ -57,27 +58,9 @@ Mensagem: "${content.replace(/"/g, '\\"').substring(0, 500)}"
 Retorne SOMENTE o JSON.`
 
   try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1 }
-        })
-      }
-    )
+    const text = await analyzeText(supabase, prompt)
+    if (!text) return null
 
-    if (!resp.ok) {
-      console.error('Gemini API error:', resp.status, await resp.text())
-      return null
-    }
-
-    const data = await resp.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-
-    // Extrai JSON da resposta (pode vir com ```json ... ```)
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return null
 
@@ -89,7 +72,7 @@ Retorne SOMENTE o JSON.`
       ai_action: parsed.action || null
     }
   } catch (err) {
-    console.error('Gemini analysis failed:', err)
+    console.error('AI analysis failed:', err)
     return null
   }
 }
@@ -99,17 +82,12 @@ Retorne SOMENTE o JSON.`
 // ---------------------------------------------------------------------------
 function extractMessageText(message: any): string | null {
   if (!message) return null
-  // Texto simples
   if (message.conversation) return message.conversation
-  // Texto estendido (com citacao, link preview, etc)
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text
-  // Caption de imagem/video/documento
   if (message.imageMessage?.caption) return message.imageMessage.caption
   if (message.videoMessage?.caption) return message.videoMessage.caption
   if (message.documentMessage?.caption) return message.documentMessage.caption
-  // Documento sem caption - retorna nome do arquivo
   if (message.documentMessage?.fileName) return `[Arquivo: ${message.documentMessage.fileName}]`
-  // Sticker, audio, etc
   if (message.stickerMessage) return '[Sticker]'
   if (message.audioMessage) return '[Audio]'
   if (message.contactMessage) return `[Contato: ${message.contactMessage.displayName || ''}]`
@@ -120,7 +98,7 @@ function extractMessageText(message: any): string | null {
 // ---------------------------------------------------------------------------
 // HANDLE INCOMING MESSAGE
 // ---------------------------------------------------------------------------
-async function handleMessage(payload: any, supabase: any, geminiKey: string | null) {
+async function handleMessage(payload: any, supabase: any) {
   const data = payload.data
   if (!data) return
 
@@ -136,9 +114,8 @@ async function handleMessage(payload: any, supabase: any, geminiKey: string | nu
   const senderName = data.pushName || 'Desconhecido'
   const content = extractMessageText(data.message)
 
-  if (!content) return // Ignora mensagens sem texto extraivel
+  if (!content) return
 
-  // Determinar tipo da mensagem
   let messageType = 'text'
   if (data.message?.imageMessage) messageType = 'image'
   else if (data.message?.audioMessage) messageType = 'audio'
@@ -182,9 +159,9 @@ async function handleMessage(payload: any, supabase: any, geminiKey: string | nu
     return
   }
 
-  // Analise com Gemini (nao bloqueia resposta ao webhook)
-  if (geminiKey && msgData?.id && messageType === 'text') {
-    const aiResult = await analyzeWithGemini(content, geminiKey)
+  // Analise com IA (multi-provider)
+  if (msgData?.id && messageType === 'text') {
+    const aiResult = await analyzeMessage(content, supabase)
     if (aiResult) {
       await supabase
         .from('whatsapp_messages')
@@ -219,7 +196,6 @@ async function handleGroupUpdate(payload: any, supabase: any) {
 // MAIN HANDLER
 // ---------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -233,19 +209,9 @@ Deno.serve(async (req: Request) => {
 
     const supabase = getSupabase()
 
-    // Buscar chave Gemini da tabela system_settings
-    let geminiKey: string | null = null
-    const { data: settingData } = await supabase
-      .from('system_settings')
-      .select('value')
-      .eq('key', 'gemini_api_key')
-      .single()
-    geminiKey = settingData?.value || null
-
-    // Rotear por tipo de evento
     switch (event) {
       case 'messages.upsert':
-        await handleMessage(payload, supabase, geminiKey)
+        await handleMessage(payload, supabase)
         break
 
       case 'groups.upsert':

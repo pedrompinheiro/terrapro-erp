@@ -6,9 +6,7 @@
  * Autor: Claude Code Session (17/02/2026)
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+import { generateWithImage, getProviderLabel, getConfig } from "../lib/aiService";
 
 // ============================================
 // Tipos
@@ -110,24 +108,15 @@ const fileToBase64 = (file: File): Promise<string> => {
 // ============================================
 
 export const processTimecardImage = async (file: File): Promise<TimecardData> => {
-    if (!API_KEY) {
-        throw new Error("VITE_GEMINI_API_KEY não configurada. Adicione sua chave Gemini no arquivo .env.local");
+    const config = getConfig();
+    if (!config.apiKey) {
+        throw new Error(`API key não configurada para ${config.provider}. Adicione no .env.local (ex: VITE_OPENAI_API_KEY, VITE_GEMINI_API_KEY ou VITE_GROQ_API_KEY)`);
     }
 
     const base64Data = await fileToBase64(file);
-
-    const genAI = new GoogleGenerativeAI(API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
     const prompt = buildOcrPrompt();
 
-    const result = await model.generateContent([
-        prompt,
-        { inlineData: { data: base64Data, mimeType: file.type } },
-    ]);
-
-    const response = await result.response;
-    const text = response.text();
+    const text = await generateWithImage(prompt, base64Data, file.type);
 
     // Limpar possíveis blocos markdown
     const jsonString = text.replace(/```json/g, '').replace(/```/g, '').trim();
