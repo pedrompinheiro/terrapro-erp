@@ -32,6 +32,7 @@ const Migration = lazy(() => import('./pages/Migration'));
 const TestConnection = lazy(() => import('./pages/TestConnection'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const TimecardCalc = lazy(() => import('./pages/TimecardCalc'));
+const Integrations = lazy(() => import('./pages/Integrations'));
 
 import { supabase } from './lib/supabase';
 import { UserProfile } from './types';
@@ -183,6 +184,7 @@ const App: React.FC = () => {
                 <Route path="/system-logs" element={<SystemLogs />} />
                 <Route path="/ponto/calculos" element={<TimecardCalc />} />
                 <Route path="/ponto/ocr" element={<Timekeeping />} />
+                <Route path="/integracoes" element={<Integrations />} />
               </Routes>
             </Suspense>
           </div>
