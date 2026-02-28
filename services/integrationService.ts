@@ -419,10 +419,10 @@ export async function uploadDocFile(file: File, integrationId: string, docId: st
   const ext = file.name.split('.').pop();
   const path = `integrations/${integrationId}/${docId}_v${newVersion}.${ext}`;
 
-  const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+  const { error: uploadError } = await supabase.storage.from('integration-docs').upload(path, file, { upsert: true });
   if (uploadError) throw uploadError;
 
-  const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
+  const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(path);
 
   // Save version history
   await supabase.from('integration_doc_versions').insert({
