@@ -271,7 +271,7 @@ SELECT
     ei.employee_id,
     e.full_name AS employee_name,
     e.cpf AS employee_cpf,
-    e.role AS employee_role,
+    e.job_title AS employee_role,
     t.id AS template_id,
     t.client_name,
     t.client_code,
