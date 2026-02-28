@@ -424,14 +424,18 @@ export async function uploadDocFile(file: File, integrationId: string, docId: st
 
   const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(path);
 
-  // Save version history
-  await supabase.from('integration_doc_versions').insert({
-    doc_id: docId,
-    version_number: newVersion,
-    file_url: urlData.publicUrl,
-    file_name: file.name,
-    file_size: file.size,
-  });
+  // Save version history (non-blocking - upload already succeeded)
+  try {
+    await supabase.from('integration_doc_versions').insert({
+      doc_id: docId,
+      version_number: newVersion,
+      file_url: urlData.publicUrl,
+      file_name: file.name,
+      file_size: file.size,
+    });
+  } catch (e) {
+    console.warn('Falha ao salvar histórico de versão:', e);
+  }
 
   return { url: urlData.publicUrl, version: newVersion };
 }
