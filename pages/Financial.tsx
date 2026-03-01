@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil } from 'lucide-react';
+import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 
 import { receivableService, ContaReceber } from '../services/receivableService';
 import { paymentService, ContaPagar } from '../services/paymentService';
-import { bankService, ContaBancaria } from '../services/bankService'; // Import BankService
+import { bankService, ContaBancaria } from '../services/bankService';
+import { filialService, Filial } from '../services/filialService';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
@@ -27,13 +28,19 @@ interface UnifiedTransaction {
   documentNumber?: string;
   observacao?: string;
   valorOriginal: number; // Valor sempre positivo (raw do BD)
+  filialId?: string;
+  filialName?: string;
 }
 
 
 const Financial: React.FC = () => {
   const [transactions, setTransactions] = useState<UnifiedTransaction[]>([]);
-  const [bankAccounts, setBankAccounts] = useState<ContaBancaria[]>([]); // Bank Accounts State
+  const [bankAccounts, setBankAccounts] = useState<ContaBancaria[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Filiais
+  const [filiais, setFiliais] = useState<Filial[]>([]);
+  const [selectedFilialId, setSelectedFilialId] = useState<string>('ALL');
 
   // Edição
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -315,11 +322,24 @@ const Financial: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    loadFiliais();
     loadEntities();
-    loadBankAccounts();
     loadCostCenters();
   }, []);
+
+  // Recarregar dados financeiros quando filial muda
+  useEffect(() => {
+    loadData();
+    loadBankAccounts();
+    setSelectedIds(new Set());
+  }, [selectedFilialId]);
+
+  const loadFiliais = async () => {
+    try {
+      const data = await filialService.listar();
+      setFiliais(data);
+    } catch { /* silencioso se companies não tiver os campos ainda */ }
+  };
 
   const loadEntities = async () => {
     const allEntities: { id: string, name: string }[] = [];
@@ -363,7 +383,8 @@ const Financial: React.FC = () => {
   // ... loadBankAccounts ...
   const loadBankAccounts = async () => {
     try {
-      const accounts = await bankService.listar();
+      const filialFilter = selectedFilialId !== 'ALL' ? selectedFilialId : undefined;
+      const accounts = await bankService.listar(filialFilter);
       setBankAccounts(accounts || []);
       // Calculate total available based on accounts
       const total = accounts?.reduce((acc, curr) => acc + (curr.saldo_atual || 0), 0) || 0;
@@ -379,30 +400,17 @@ const Financial: React.FC = () => {
     }
   };
 
-  // ... loadData ...
-
-  // To avoid duplication, I will invoke replace_file_content separately for the handleAddTransaction function later 
-  // or I can try to include handleAddTransaction here if it fits within the context/range, 
-  // but since handleAddTransaction is further down, I will target the state and useEffect first.
-
-  // Wait, I need to update handleAddTransaction too.
-  // Let's first update the STATE and LOADING logic.
-
-  // Actually, I can replace the whole block from "Estados de Formulário" down to the end of "handleAddTransaction" 
-  // but that's a huge block.
-
-  // Let's split. First: State and Loaders.
-
-
   const loadData = async () => {
     try {
       setLoading(true);
 
+      const filialFilter = selectedFilialId !== 'ALL' ? selectedFilialId : undefined;
+
       // 1. Buscar Contas a Receber
-      const receivables = await receivableService.listar() || [];
+      const receivables = await receivableService.listar({ filial_id: filialFilter }) || [];
 
       // 2. Buscar Contas a Pagar
-      const payables = await paymentService.listar() || [];
+      const payables = await paymentService.listar({ filial_id: filialFilter }) || [];
 
       // 3. Unificar dados
       const unified: UnifiedTransaction[] = [];
@@ -432,7 +440,9 @@ const Financial: React.FC = () => {
           costCenterGroup: cc?.grupo_dre || 'Outros',
           costCenterName: cc?.nome,
           documentNumber: r.numero_documento,
-          observacao: r.observacao
+          observacao: r.observacao,
+          filialId: r.filial_id,
+          filialName: r.filial?.short_name
         });
       });
 
@@ -461,7 +471,9 @@ const Financial: React.FC = () => {
           costCenterGroup: cc?.grupo_dre || 'Outros',
           costCenterName: cc?.nome,
           documentNumber: p.numero_documento,
-          observacao: p.observacao
+          observacao: p.observacao,
+          filialId: p.filial_id,
+          filialName: p.filial?.short_name
         });
       });
 
@@ -529,6 +541,7 @@ const Financial: React.FC = () => {
     }
 
     const entityName = entities.find(e => e.id === newTransaction.entityId)?.name || '';
+    const filialId = selectedFilialId !== 'ALL' ? selectedFilialId : (filiais[0]?.id || undefined);
 
     try {
       if (editingId) {
@@ -570,7 +583,8 @@ const Financial: React.FC = () => {
             status: 'PENDENTE',
             numero_titulo: '',
             numero_documento: newTransaction.documentNumber,
-            centro_custo_id: newTransaction.costCenter
+            centro_custo_id: newTransaction.costCenter,
+            filial_id: filialId
           } as ContaReceber);
         } else {
           await paymentService.criar({
@@ -583,7 +597,8 @@ const Financial: React.FC = () => {
             status: 'PENDENTE',
             numero_titulo: '',
             numero_documento: newTransaction.documentNumber,
-            centro_custo_id: newTransaction.costCenter
+            centro_custo_id: newTransaction.costCenter,
+            filial_id: filialId
           } as ContaPagar);
         }
         toast.success("Transação criada com sucesso!");
@@ -868,6 +883,39 @@ const Financial: React.FC = () => {
       </div>
 
 
+
+      {/* SELETOR DE FILIAL */}
+      {filiais.length > 0 && (
+        <div className="flex items-center gap-3 bg-slate-900/50 border border-slate-800 rounded-2xl p-3 mb-4">
+          <Building2 className="text-blue-400 shrink-0" size={20} />
+          <span className="text-xs font-black text-slate-500 uppercase tracking-widest shrink-0">Filial:</span>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => setSelectedFilialId('ALL')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                selectedFilialId === 'ALL'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-600'
+              }`}
+            >
+              Todas
+            </button>
+            {filiais.map(f => (
+              <button
+                key={f.id}
+                onClick={() => setSelectedFilialId(f.id)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  selectedFilialId === f.id
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                    : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                {f.short_name || f.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* BANK ACCOUNTS CAROUSEL */}
       <div className="flex justify-between items-center mb-2">
@@ -1620,7 +1668,7 @@ const Financial: React.FC = () => {
       </Modal>
 
       {/* MODAL: RELATÓRIO DRE */}
-      <Modal isOpen={isDREModalOpen} onClose={() => setIsDREModalOpen(false)} title="Demonstrativo de Resultado (DRE Gerencial)">
+      <Modal isOpen={isDREModalOpen} onClose={() => setIsDREModalOpen(false)} title={`DRE Gerencial — ${selectedFilialId === 'ALL' ? 'Consolidado' : filiais.find(f => f.id === selectedFilialId)?.short_name || 'Todas'}`}>
         <div className="space-y-6">
           {/* Filtros */}
           <div className="flex justify-between items-center bg-slate-900 p-4 rounded-xl border border-slate-800">
