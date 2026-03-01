@@ -160,7 +160,11 @@ const Registrations: React.FC = () => {
 
     const handleEditEntity = (e: Entity) => {
         setEditingEntityId(e.id);
-        setEntityForm(e);
+        const parsed = {
+            ...e,
+            contacts: typeof e.contacts === 'string' ? JSON.parse(e.contacts) : (e.contacts || []),
+        };
+        setEntityForm(parsed);
         setActiveModalTab('GENERAL');
         setIsModalOpen(true);
     };
@@ -646,7 +650,7 @@ const Registrations: React.FC = () => {
                                     <button onClick={handleAddContact} className="w-full py-2 bg-blue-600/20 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold transition-colors">+ Adicionar</button>
                                 </div>
                                 <div className="space-y-2">
-                                    {entityForm.contacts?.map((c, idx) => (
+                                    {(Array.isArray(entityForm.contacts) ? entityForm.contacts : typeof entityForm.contacts === 'string' ? JSON.parse(entityForm.contacts) : [])?.map((c, idx) => (
                                         <div key={idx} className="flex items-center justify-between bg-slate-900 p-3 rounded-xl border border-slate-800 hover:border-slate-700">
                                             <div>
                                                 <p className="text-sm font-bold text-white">{c.name}</p>

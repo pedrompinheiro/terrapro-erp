@@ -110,6 +110,21 @@ class PaymentService {
     }
 
     /**
+     * Atualizar conta a pagar existente
+     */
+    async atualizar(id: string, dados: Partial<ContaPagar>) {
+        const { data, error } = await supabase
+            .from('contas_pagar')
+            .update(dados)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
      * Criar conta parcelada
      */
     async criarParcelado(conta: Omit<ContaPagar, 'numero_titulo'>, config: ParcelamentoConfig) {

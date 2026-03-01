@@ -114,6 +114,21 @@ class ReceivableService {
     }
 
     /**
+     * Atualizar conta a receber existente
+     */
+    async atualizar(id: string, dados: Partial<ContaReceber>) {
+        const { data, error } = await supabase
+            .from('contas_receber')
+            .update(dados)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
      * Criar cobrança recorrente (contratos mensais)
      */
     async criarRecorrente(dados: {

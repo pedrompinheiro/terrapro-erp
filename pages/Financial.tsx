@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder } from 'lucide-react'; // New icons
+import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 
@@ -24,6 +24,9 @@ interface UnifiedTransaction {
   costCenterId?: string; // ID do Centro de Custo
   costCenterGroup?: string; // Grupo DRE (Ex: Receita Operacional)
   costCenterName?: string; // Nome do Centro
+  documentNumber?: string;
+  observacao?: string;
+  valorOriginal: number; // Valor sempre positivo (raw do BD)
 }
 
 
@@ -31,6 +34,12 @@ const Financial: React.FC = () => {
   const [transactions, setTransactions] = useState<UnifiedTransaction[]>([]);
   const [bankAccounts, setBankAccounts] = useState<ContaBancaria[]>([]); // Bank Accounts State
   const [loading, setLoading] = useState(true);
+
+  // Edição
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Multi-seleção
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,7 +60,8 @@ const Financial: React.FC = () => {
     dueDate: new Date().toISOString().split('T')[0],
     type: 'INCOME' as 'INCOME' | 'EXPENSE',
     costCenter: '',
-    documentNumber: '' // New Field
+    documentNumber: '',
+    observacao: ''
   });
 
   // Novo Banco State
@@ -201,6 +211,7 @@ const Financial: React.FC = () => {
 
   // Estados de Baixa (Settlement)
   const [settleDate, setSettleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [settlePaymentMethod, setSettlePaymentMethod] = useState('PIX');
   const [selectedBankId, setSelectedBankId] = useState<string>(''); // Selected Bank for Settlement
   const [applyInterest, setApplyInterest] = useState(true);
   const [settlementValues, setSettlementValues] = useState({
@@ -311,8 +322,21 @@ const Financial: React.FC = () => {
   }, []);
 
   const loadEntities = async () => {
-    const { data } = await supabase.from('entities').select('id, name').order('name');
-    if (data) setEntities(data);
+    const allEntities: { id: string, name: string }[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data } = await supabase
+        .from('entities')
+        .select('id, name')
+        .order('name')
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+      if (!data || data.length === 0) break;
+      allEntities.push(...data);
+      if (data.length < pageSize) break;
+      page++;
+    }
+    setEntities(allEntities);
   };
 
   const loadCostCenters = async () => {
@@ -400,12 +424,15 @@ const Financial: React.FC = () => {
           entityName: r.cliente?.name || 'Cliente Desconhecido',
           entityId: r.cliente_id,
           amount: r.valor_saldo || r.valor_original,
+          valorOriginal: r.valor_original,
           dueDate: r.data_vencimento,
           status,
           originalStatus: r.status,
           costCenterId: r.centro_custo_id,
           costCenterGroup: cc?.grupo_dre || 'Outros',
-          costCenterName: cc?.nome
+          costCenterName: cc?.nome,
+          documentNumber: r.numero_documento,
+          observacao: r.observacao
         });
       });
 
@@ -426,12 +453,15 @@ const Financial: React.FC = () => {
           entityName: p.fornecedor?.name || 'Fornecedor Desconhecido',
           entityId: p.fornecedor_id,
           amount: -(p.valor_saldo || p.valor_original),
+          valorOriginal: p.valor_original,
           dueDate: p.data_vencimento,
           status,
           originalStatus: p.status,
           costCenterId: p.centro_custo_id,
           costCenterGroup: cc?.grupo_dre || 'Outros',
-          costCenterName: cc?.nome
+          costCenterName: cc?.nome,
+          documentNumber: p.numero_documento,
+          observacao: p.observacao
         });
       });
 
@@ -458,59 +488,113 @@ const Financial: React.FC = () => {
     }
   };
 
+  const resetForm = () => {
+    setEditingId(null);
+    setNewTransaction({
+      description: '',
+      entityId: '',
+      amount: 0,
+      dueDate: new Date().toISOString().split('T')[0],
+      type: 'INCOME',
+      costCenter: '',
+      documentNumber: '',
+      observacao: ''
+    });
+  };
+
+  const openEditModal = (e: React.MouseEvent, tr: UnifiedTransaction) => {
+    e.stopPropagation();
+    // Garantir que a entidade esteja na lista (pode não ter carregado ainda na paginação)
+    if (tr.entityId && !entities.find(ent => ent.id === tr.entityId)) {
+      setEntities(prev => [...prev, { id: tr.entityId, name: tr.entityName }].sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    setEditingId(tr.originalId);
+    setNewTransaction({
+      description: tr.description,
+      entityId: tr.entityId,
+      amount: tr.valorOriginal,
+      dueDate: tr.dueDate,
+      type: tr.type,
+      costCenter: tr.costCenterId || '',
+      documentNumber: tr.documentNumber || '',
+      observacao: tr.observacao || ''
+    });
+    setIsModalOpen(true);
+  };
+
   const handleAddTransaction = async () => {
     if (!newTransaction.description || !newTransaction.amount || !newTransaction.entityId) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
 
+    const entityName = entities.find(e => e.id === newTransaction.entityId)?.name || '';
+
     try {
-      if (newTransaction.type === 'INCOME') {
-        await receivableService.criar({
-          descricao: newTransaction.description,
-          cliente_id: newTransaction.entityId,
-          cliente_nome: entities.find(e => e.id === newTransaction.entityId)?.name || '',
-          valor_original: Number(newTransaction.amount),
-          data_emissao: new Date().toISOString().split('T')[0],
-          data_vencimento: newTransaction.dueDate,
-          status: 'PENDENTE',
-          numero_titulo: '', // Auto
-          numero_documento: newTransaction.documentNumber,
-          centro_custo_id: newTransaction.costCenter
-        } as ContaReceber);
+      if (editingId) {
+        // UPDATE
+        if (newTransaction.type === 'INCOME') {
+          await receivableService.atualizar(editingId, {
+            descricao: newTransaction.description,
+            cliente_id: newTransaction.entityId,
+            cliente_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_vencimento: newTransaction.dueDate,
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter || undefined,
+            observacao: newTransaction.observacao || undefined
+          });
+        } else {
+          await paymentService.atualizar(editingId, {
+            descricao: newTransaction.description,
+            fornecedor_id: newTransaction.entityId,
+            fornecedor_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_vencimento: newTransaction.dueDate,
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter || undefined,
+            observacao: newTransaction.observacao || undefined
+          });
+        }
+        toast.success("Lançamento atualizado com sucesso!");
       } else {
-        await paymentService.criar({
-          descricao: newTransaction.description,
-          fornecedor_id: newTransaction.entityId,
-          fornecedor_nome: entities.find(e => e.id === newTransaction.entityId)?.name || '',
-          valor_original: Number(newTransaction.amount),
-          data_emissao: new Date().toISOString().split('T')[0],
-          data_vencimento: newTransaction.dueDate,
-          status: 'PENDENTE',
-          numero_titulo: '', // Auto
-          numero_documento: newTransaction.documentNumber,
-          centro_custo_id: newTransaction.costCenter
-        } as ContaPagar);
+        // CREATE
+        if (newTransaction.type === 'INCOME') {
+          await receivableService.criar({
+            descricao: newTransaction.description,
+            cliente_id: newTransaction.entityId,
+            cliente_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_emissao: new Date().toISOString().split('T')[0],
+            data_vencimento: newTransaction.dueDate,
+            status: 'PENDENTE',
+            numero_titulo: '',
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter
+          } as ContaReceber);
+        } else {
+          await paymentService.criar({
+            descricao: newTransaction.description,
+            fornecedor_id: newTransaction.entityId,
+            fornecedor_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_emissao: new Date().toISOString().split('T')[0],
+            data_vencimento: newTransaction.dueDate,
+            status: 'PENDENTE',
+            numero_titulo: '',
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter
+          } as ContaPagar);
+        }
+        toast.success("Transação criada com sucesso!");
       }
 
-      toast.success("Transação criada com sucesso!");
       setIsModalOpen(false);
+      resetForm();
       loadData();
-
-      // Reset form
-      setNewTransaction({
-        description: '',
-        entityId: '',
-        amount: 0,
-        dueDate: new Date().toISOString().split('T')[0],
-        type: 'INCOME',
-        costCenter: '',
-        documentNumber: ''
-      });
-
     } catch (error) {
       console.error(error);
-      toast.error("Erro ao salvar transação");
+      toast.error(editingId ? "Erro ao atualizar lançamento" : "Erro ao salvar transação");
     }
   };
 
@@ -642,7 +726,7 @@ const Financial: React.FC = () => {
         await receivableService.receber(selectedTransaction.originalId, {
           valor_recebido: settlementValues.total,
           data_recebimento: settleDate,
-          forma_recebimento: 'PIX', // TODO: Dropdown no modal
+          forma_recebimento: settlePaymentMethod,
           banco_id: selectedBankId,
           valor_desconto: settlementValues.discount,
           observacao: applyInterest ? `Com Juros/Multa` : ''
@@ -651,7 +735,7 @@ const Financial: React.FC = () => {
         await paymentService.pagar(selectedTransaction.originalId, {
           valor_pago: settlementValues.total,
           data_pagamento: settleDate,
-          forma_pagamento: 'PIX', // TODO: Dropdown
+          forma_pagamento: settlePaymentMethod,
           banco_id: selectedBankId,
           observacao: 'Pagamento via ERP'
         });
@@ -689,6 +773,52 @@ const Financial: React.FC = () => {
     });
   };
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredTransactions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredTransactions.map(t => t.id)));
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Deseja realmente excluir ${selectedIds.size} lançamento(s)?`)) return;
+
+    handleSecurityCheck(async () => {
+      const selected = transactions.filter(t => selectedIds.has(t.id));
+      const crIds = selected.filter(t => t.type === 'INCOME').map(t => t.originalId);
+      const cpIds = selected.filter(t => t.type === 'EXPENSE').map(t => t.originalId);
+      let errors = 0;
+
+      if (crIds.length > 0) {
+        const { error } = await supabase.from('contas_receber').delete().in('id', crIds);
+        if (error) errors++;
+      }
+      if (cpIds.length > 0) {
+        const { error } = await supabase.from('contas_pagar').delete().in('id', cpIds);
+        if (error) errors++;
+      }
+
+      if (errors === 0) {
+        toast.success(`${selectedIds.size} lançamento(s) excluído(s)`);
+      } else {
+        toast.error("Alguns lançamentos não puderam ser excluídos");
+      }
+      setSelectedIds(new Set());
+      loadData();
+    });
+  };
+
   if (loading && transactions.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -722,11 +852,14 @@ const Financial: React.FC = () => {
           >
             <Calendar size={16} /> DRE Gerencial
           </button>
-          <button className="bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 transition">
+          <button
+            onClick={() => toast('Conciliação bancária em desenvolvimento', { icon: '🏗️' })}
+            className="bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 transition"
+          >
             Conciliação
           </button>
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => { resetForm(); setIsModalOpen(true); }}
             className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition"
           >
             <Plus size={18} /> Novo Lançamento
@@ -859,10 +992,41 @@ const Financial: React.FC = () => {
           )}
         </div>
 
+        {selectedIds.size > 0 && (
+          <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 mb-2">
+            <span className="text-sm text-blue-400 font-bold">
+              {selectedIds.size} lançamento{selectedIds.size > 1 ? 's' : ''} selecionado{selectedIds.size > 1 ? 's' : ''}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                Limpar Seleção
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+              >
+                <Trash2 size={14} />
+                Excluir Selecionados
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-slate-950 text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                <th className="px-3 py-4 w-10">
+                  <input
+                    type="checkbox"
+                    checked={filteredTransactions.length > 0 && selectedIds.size === filteredTransactions.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-blue-500 cursor-pointer"
+                  />
+                </th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Descrição / Entidade</th>
                 <th className="px-6 py-4">Vencimento</th>
@@ -873,15 +1037,23 @@ const Financial: React.FC = () => {
             <tbody className="divide-y divide-slate-800">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">Nenhuma transação encontrada.</td>
+                  <td colSpan={6} className="p-8 text-center text-slate-500">Nenhuma transação encontrada.</td>
                 </tr>
               ) : (
                 filteredTransactions.map((tr) => (
                   <tr
                     key={tr.id}
                     onClick={() => handleTransactionClick(tr)}
-                    className="hover:bg-slate-800/50 transition-colors cursor-pointer group"
+                    className={`hover:bg-slate-800/50 transition-colors cursor-pointer group ${selectedIds.has(tr.id) ? 'bg-blue-500/5' : ''}`}
                   >
+                    <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(tr.id)}
+                        onChange={() => toggleSelect(tr.id)}
+                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-blue-500 cursor-pointer"
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider border ${tr.status === 'PAID' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                         tr.status === 'OVERDUE' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
@@ -913,13 +1085,24 @@ const Financial: React.FC = () => {
                       {tr.amount >= 0 ? '+' : '-'} R$ {Math.abs(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={(e) => handleDelete(e, tr)}
-                        className="p-2 rounded-lg text-slate-600 hover:text-red-500 hover:bg-slate-800 transition-colors"
-                        title="Excluir Lançamento"
-                      >
-                        <Archive size={16} />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {tr.status !== 'PAID' && tr.status !== 'CANCELADO' && (
+                          <button
+                            onClick={(e) => openEditModal(e, tr)}
+                            className="p-2 rounded-lg text-slate-600 hover:text-blue-400 hover:bg-slate-800 transition-colors"
+                            title="Editar Lançamento"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => handleDelete(e, tr)}
+                          className="p-2 rounded-lg text-slate-600 hover:text-red-500 hover:bg-slate-800 transition-colors"
+                          title="Excluir Lançamento"
+                        >
+                          <Archive size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1010,18 +1193,20 @@ const Financial: React.FC = () => {
       </Modal>
 
       {/* MODAL: NOVO LANÇAMENTO */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Novo Lançamento Financeiro">
+      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); resetForm(); }} title={editingId ? "Editar Lançamento Financeiro" : "Novo Lançamento Financeiro"}>
         <div className="space-y-4">
-          <div className="flex gap-4 p-1 bg-slate-900 rounded-xl border border-slate-800">
+          <div className={`flex gap-4 p-1 bg-slate-900 rounded-xl border border-slate-800 ${editingId ? 'opacity-60' : ''}`}>
             <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'INCOME' }))}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+              onClick={() => !editingId && setNewTransaction(prev => ({ ...prev, type: 'INCOME' }))}
+              disabled={!!editingId}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'} ${editingId ? 'cursor-not-allowed' : ''}`}
             >
               Receita (Entrada)
             </button>
             <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'EXPENSE' }))}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'EXPENSE' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+              onClick={() => !editingId && setNewTransaction(prev => ({ ...prev, type: 'EXPENSE' }))}
+              disabled={!!editingId}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'EXPENSE' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'} ${editingId ? 'cursor-not-allowed' : ''}`}
             >
               Despesa (Saída)
             </button>
@@ -1138,12 +1323,23 @@ const Financial: React.FC = () => {
             </div>
           </div>
 
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Observação</label>
+            <textarea
+              value={newTransaction.observacao}
+              onChange={e => setNewTransaction(prev => ({ ...prev, observacao: e.target.value }))}
+              placeholder="Observações adicionais..."
+              rows={3}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500 resize-none"
+            />
+          </div>
+
           <div className="pt-4">
             <button
               onClick={handleAddTransaction}
               className={`w-full py-4 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'}`}
             >
-              <Save size={20} /> Salvar Lançamento
+              <Save size={20} /> {editingId ? 'Salvar Alterações' : 'Salvar Lançamento'}
             </button>
           </div>
         </div>
@@ -1214,6 +1410,24 @@ const Financial: React.FC = () => {
                     {acc.banco_nome} - Ag: {acc.agencia} CC: {acc.conta}
                   </option>
                 ))}
+              </select>
+            </div>
+
+            {/* Forma de Pagamento */}
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Forma de Pagamento</label>
+              <select
+                value={settlePaymentMethod}
+                onChange={e => setSettlePaymentMethod(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
+              >
+                <option value="PIX">PIX / Transferência</option>
+                <option value="Boleto">Boleto</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Cartao Debito">Cartão Débito</option>
+                <option value="Cartao Credito">Cartão Crédito</option>
+                <option value="Deposito">Depósito</option>
               </select>
             </div>
 
