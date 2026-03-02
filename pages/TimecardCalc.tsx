@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Calculator, Calendar, Clock, User, ChevronLeft, ChevronRight, Download, Loader2, Moon, AlertCircle, CheckCircle, Sun, CloudSun, Briefcase, RefreshCw, Shield } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import TimeInput from '../components/TimeInput';
 import {
     calculateMonth,
     saveCalculation,
@@ -59,6 +60,8 @@ const TimecardCalc: React.FC = () => {
     const [companyFilter, setCompanyFilter] = useState('');
     const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
     const [justificationTypes, setJustificationTypes] = useState<JustificationType[]>([]);
+    // Estado local para edições de batidas (antes de salvar)
+    const [editedPunches, setEditedPunches] = useState<Record<string, Record<string, string>>>({});
 
     useEffect(() => {
         fetchEmployees();
@@ -143,6 +146,79 @@ const TimecardCalc: React.FC = () => {
         await handleCalculate();
     };
 
+    // Mapa de campo local → coluna no banco
+    const punchFieldToColumn: Record<string, string> = {
+        entrada1: 'entry_time',
+        saida1: 'break_start',
+        entrada2: 'break_end',
+        saida2: 'exit_time',
+    };
+
+    const handleUpdatePunch = useCallback((date: string, field: string, value: string) => {
+        setEditedPunches(prev => ({
+            ...prev,
+            [date]: { ...(prev[date] || {}), [field]: value }
+        }));
+    }, []);
+
+    const handleSavePunch = useCallback(async (day: DayCalculation, field: string) => {
+        if (!selectedEmployee) return;
+
+        const emp = employees.find(e => e.id === selectedEmployee);
+        const editedValue = editedPunches[day.date]?.[field] || '';
+        const dbColumn = punchFieldToColumn[field];
+        if (!dbColumn) return;
+
+        // Verificar se já existe registro pra esse dia
+        const { data: existing } = await supabase
+            .from('time_entries')
+            .select('id')
+            .eq('employee_id', selectedEmployee)
+            .eq('date', day.date)
+            .maybeSingle();
+
+        if (existing) {
+            const { error } = await supabase
+                .from('time_entries')
+                .update({ [dbColumn]: editedValue || null })
+                .eq('id', existing.id);
+            if (error) {
+                console.error('Erro ao salvar batida:', error);
+                return;
+            }
+        } else {
+            // Criar entry nova
+            const { error } = await supabase
+                .from('time_entries')
+                .insert({
+                    employee_id: selectedEmployee,
+                    company_id: emp?.company_id || null,
+                    date: day.date,
+                    [dbColumn]: editedValue || null,
+                });
+            if (error) {
+                console.error('Erro ao inserir batida:', error);
+                return;
+            }
+        }
+
+        // Limpar edições locais desse dia e recalcular
+        setEditedPunches(prev => {
+            const copy = { ...prev };
+            delete copy[day.date];
+            return copy;
+        });
+        await handleCalculate();
+    }, [selectedEmployee, employees, editedPunches]);
+
+    // Pega o valor do punch: prioriza edição local, senão usa o calculado
+    const getPunchValue = useCallback((day: DayCalculation, field: string): string => {
+        if (editedPunches[day.date] && field in editedPunches[day.date]) {
+            return editedPunches[day.date][field];
+        }
+        return (day.punches as any)[field] || '';
+    }, [editedPunches]);
+
     const filteredEmployees = useMemo(() => {
         return employees.filter(e => {
             const matchSearch = !searchTerm ||
@@ -170,6 +246,7 @@ const TimecardCalc: React.FC = () => {
                 emp.work_shift_id
             );
             setCalculation(result);
+            setEditedPunches({}); // Limpa edições locais após recalcular
         } catch (err: any) {
             console.error(err);
             alert('Erro ao calcular: ' + (err.message || err));
@@ -720,10 +797,42 @@ const TimecardCalc: React.FC = () => {
                                                                             <span className="text-[9px] text-slate-600">ÚTL</span>
                                                                         )}
                                                                     </td>
-                                                                    <td className="px-2 py-2 text-center font-mono text-slate-300">{day.punches.entrada1 || <span className="text-slate-700">--:--</span>}</td>
-                                                                    <td className="px-2 py-2 text-center font-mono text-slate-300">{day.punches.saida1 || <span className="text-slate-700">--:--</span>}</td>
-                                                                    <td className="px-2 py-2 text-center font-mono text-slate-300">{day.punches.entrada2 || <span className="text-slate-700">--:--</span>}</td>
-                                                                    <td className="px-2 py-2 text-center font-mono text-slate-300">{day.punches.saida2 || <span className="text-slate-700">--:--</span>}</td>
+                                                                    <td className="px-1 py-1 text-center">
+                                                                        <TimeInput
+                                                                            value={getPunchValue(day, 'entrada1')}
+                                                                            onChange={(v) => handleUpdatePunch(day.date, 'entrada1', v)}
+                                                                            onBlurSave={() => handleSavePunch(day, 'entrada1')}
+                                                                            placeholder="--:--"
+                                                                            dark
+                                                                        />
+                                                                    </td>
+                                                                    <td className="px-1 py-1 text-center">
+                                                                        <TimeInput
+                                                                            value={getPunchValue(day, 'saida1')}
+                                                                            onChange={(v) => handleUpdatePunch(day.date, 'saida1', v)}
+                                                                            onBlurSave={() => handleSavePunch(day, 'saida1')}
+                                                                            placeholder="--:--"
+                                                                            dark
+                                                                        />
+                                                                    </td>
+                                                                    <td className="px-1 py-1 text-center">
+                                                                        <TimeInput
+                                                                            value={getPunchValue(day, 'entrada2')}
+                                                                            onChange={(v) => handleUpdatePunch(day.date, 'entrada2', v)}
+                                                                            onBlurSave={() => handleSavePunch(day, 'entrada2')}
+                                                                            placeholder="--:--"
+                                                                            dark
+                                                                        />
+                                                                    </td>
+                                                                    <td className="px-1 py-1 text-center">
+                                                                        <TimeInput
+                                                                            value={getPunchValue(day, 'saida2')}
+                                                                            onChange={(v) => handleUpdatePunch(day.date, 'saida2', v)}
+                                                                            onBlurSave={() => handleSavePunch(day, 'saida2')}
+                                                                            placeholder="--:--"
+                                                                            dark
+                                                                        />
+                                                                    </td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-white">{day.workedMinutes > 0 ? minutesToHHMM(day.workedMinutes) : <span className="text-slate-700">--:--</span>}</td>
                                                                     <td className="px-2 py-2 text-center font-mono text-slate-500">{day.expectedMinutes > 0 ? minutesToHHMM(day.expectedMinutes) : <span className="text-slate-700">--:--</span>}</td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-emerald-400">{day.overtimeMinutes > 0 ? minutesToHHMM(day.overtimeMinutes) : ''}</td>
