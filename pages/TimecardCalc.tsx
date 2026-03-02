@@ -130,6 +130,64 @@ const TimecardCalc: React.FC = () => {
         }
     };
 
+    const [shifting, setShifting] = useState(false);
+
+    const shiftDays = async (direction: -1 | 1) => {
+        if (!selectedEmployee || !calculation) return;
+
+        const emp = employees.find(e => e.id === selectedEmployee);
+        if (!emp) return;
+
+        const label = direction === -1 ? '-1 dia (recuar)' : '+1 dia (avançar)';
+        const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+        const endDate = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
+
+        // Buscar entries do mês
+        const { data: entries, error: fetchErr } = await supabase
+            .from('time_entries')
+            .select('*')
+            .eq('employee_id', selectedEmployee)
+            .gte('date', startDate)
+            .lte('date', endDate)
+            .order('date');
+
+        if (fetchErr || !entries || entries.length === 0) {
+            alert('Nenhum registro encontrado neste mês para deslocar.');
+            return;
+        }
+
+        const ok = confirm(`Deslocar ${entries.length} registros de ${emp.full_name} em ${label}?\n\nIsso vai alterar as datas no banco de dados.`);
+        if (!ok) return;
+
+        setShifting(true);
+        try {
+            // Deletar entries antigos
+            const ids = entries.map(e => e.id);
+            await supabase.from('time_entries').delete().in('id', ids);
+
+            // Inserir com datas deslocadas
+            const newEntries = entries.map(e => {
+                const d = new Date(e.date + 'T12:00:00');
+                d.setDate(d.getDate() + direction);
+                const newDate = d.toISOString().split('T')[0];
+                const { id, created_at, ...rest } = e;
+                return { ...rest, date: newDate };
+            });
+
+            const { error: insertErr } = await supabase.from('time_entries').upsert(newEntries, { onConflict: 'employee_id,date' as any });
+            if (insertErr) throw insertErr;
+
+            // Recalcular
+            await handleCalculate();
+            alert(`${entries.length} registros deslocados com sucesso!`);
+        } catch (err: any) {
+            console.error(err);
+            alert('Erro ao deslocar: ' + (err.message || err));
+        } finally {
+            setShifting(false);
+        }
+    };
+
     const handleExportCSV = () => {
         if (!calculation) return;
 
@@ -424,6 +482,25 @@ const TimecardCalc: React.FC = () => {
                                                         <Download size={14} />
                                                         CSV
                                                     </button>
+                                                    <div className="flex items-center gap-1 ml-2 border-l border-slate-700 pl-3">
+                                                        <span className="text-[10px] text-slate-500 uppercase font-bold mr-1">Deslocar</span>
+                                                        <button
+                                                            onClick={() => shiftDays(-1)}
+                                                            disabled={shifting}
+                                                            className="px-2.5 py-2 rounded-lg bg-amber-600/20 text-amber-400 font-bold flex items-center gap-1 hover:bg-amber-600/30 transition-all text-xs disabled:opacity-50"
+                                                            title="Recuar todos os registros em 1 dia"
+                                                        >
+                                                            <ChevronLeft size={12} /> -1d
+                                                        </button>
+                                                        <button
+                                                            onClick={() => shiftDays(1)}
+                                                            disabled={shifting}
+                                                            className="px-2.5 py-2 rounded-lg bg-amber-600/20 text-amber-400 font-bold flex items-center gap-1 hover:bg-amber-600/30 transition-all text-xs disabled:opacity-50"
+                                                            title="Avançar todos os registros em 1 dia"
+                                                        >
+                                                            +1d <ChevronRight size={12} />
+                                                        </button>
+                                                    </div>
                                                 </>
                                             )}
                                         </div>

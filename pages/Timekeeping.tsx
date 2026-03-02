@@ -391,6 +391,47 @@ const Timekeeping: React.FC = () => {
     };
 
     // ============================================
+    // Salvar card individual
+    // ============================================
+
+    const saveCard = async (idx: number) => {
+        const card = cards[idx];
+        if (!card || card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) return;
+
+        const saveMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+        const saveYear = card.overrideYear || card.data?.year || new Date().getFullYear();
+
+        const entries = (card.editedEntries || card.data?.entries || [])
+            .filter(e => card.selectedDays.has(e.day))
+            .map(e => ({
+                ...e,
+                date: `${saveYear}-${String(saveMonth).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+            }));
+
+        const emp = employees.find(e => e.id === card.matchedEmployeeId);
+        const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId, emp?.company_id);
+
+        let allOk = true;
+        for (const record of records) {
+            const { error } = await supabase
+                .from('time_entries')
+                .upsert(record, { onConflict: 'employee_id,date' as any });
+            if (error) {
+                console.error('[SAVE] ERRO:', record.date, JSON.stringify(error));
+                allOk = false;
+            }
+        }
+
+        if (allOk) {
+            setCards(prev => {
+                const copy = [...prev];
+                copy[idx] = { ...copy[idx], status: 'saved' };
+                return copy;
+            });
+        }
+    };
+
+    // ============================================
     // Contadores
     // ============================================
 
@@ -569,6 +610,7 @@ const Timekeeping: React.FC = () => {
                                 }
                                 onToggleDay={(day) => toggleDay(idx, day)}
                                 onToggleAllDays={() => toggleAllDays(idx)}
+                                onSaveCard={() => saveCard(idx)}
                             />
                         ))}
                     </div>
@@ -602,12 +644,14 @@ interface OcrCardProps {
     onUpdateEntry: (entryIdx: number, field: keyof TimecardEntry, value: string) => void;
     onToggleDay: (day: number) => void;
     onToggleAllDays: () => void;
+    onSaveCard: () => Promise<void>;
 }
 
 const OcrCardComponent: React.FC<OcrCardProps> = ({
     card, index, employees, onRemove, onRetry, onToggleExpand,
-    onChangeEmployee, onChangeMonthYear, onUpdateEntry, onToggleDay, onToggleAllDays
+    onChangeEmployee, onChangeMonthYear, onUpdateEntry, onToggleDay, onToggleAllDays, onSaveCard
 }) => {
+    const [isSavingThis, setIsSavingThis] = useState(false);
     const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
     const [empSearch, setEmpSearch] = useState('');
 
@@ -802,6 +846,21 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 
                 {/* Botões */}
                 <div className="flex items-center gap-1 flex-shrink-0">
+                    {card.status === 'success' && card.matchedEmployeeId && card.selectedDays.size > 0 && (
+                        <button
+                            onClick={async () => {
+                                setIsSavingThis(true);
+                                await onSaveCard();
+                                setIsSavingThis(false);
+                            }}
+                            disabled={isSavingThis}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50 transition-colors"
+                            title="Salvar este cartão"
+                        >
+                            {isSavingThis ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            Salvar
+                        </button>
+                    )}
                     {card.status === 'error' && (
                         <button onClick={onRetry} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Tentar novamente">
                             <RefreshCw size={16} />
