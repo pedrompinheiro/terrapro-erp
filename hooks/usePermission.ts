@@ -20,8 +20,9 @@ export function usePermission() {
             if (!session) return [];
 
             const { data, error } = await supabase
-                .from('view_user_permissions')
-                .select('*');
+                .from('user_permissions')
+                .select('*')
+                .eq('user_id', session.user.id);
 
             if (error) {
                 console.error('Erro ao carregar permissões:', error);
