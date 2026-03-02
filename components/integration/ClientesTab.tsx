@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, X, FileText, Building2, Edit2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, ChevronDown, ChevronRight, X, FileText, Building2, Edit2, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { supabase } from '../../lib/supabase';
 import {
   fetchTemplates, createTemplate, deleteTemplate,
   addTemplateItem, removeTemplateItem,
@@ -215,6 +216,53 @@ const NewTemplateModal: React.FC<{ onClose: () => void; onCreated: () => void }>
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: any) => setForm(prev => ({ ...prev, [k]: v }));
 
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<{ id: string; name: string; document?: string; email?: string; phone?: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<NodeJS.Timeout>();
+
+  const searchEntities = async (query: string) => {
+    if (query.length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
+    setSearchLoading(true);
+    try {
+      const { data } = await supabase
+        .from('entities')
+        .select('id, name, document, email, phone, is_client')
+        .or(`name.ilike.%${query}%,document.ilike.%${query}%`)
+        .eq('is_client', true)
+        .order('name')
+        .limit(10);
+      setSuggestions(data || []);
+      setShowSuggestions(true);
+    } catch { setSuggestions([]); }
+    finally { setSearchLoading(false); }
+  };
+
+  const handleClientNameChange = (value: string) => {
+    set('client_name', value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => searchEntities(value), 300);
+  };
+
+  const handleSelectEntity = (entity: typeof suggestions[0]) => {
+    set('client_name', entity.name);
+    if (entity.email) set('contact_email', entity.email);
+    if (entity.phone) set('contact_phone', entity.phone);
+    if (entity.document) set('client_code', entity.document);
+    setShowSuggestions(false);
+  };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setShowSuggestions(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const handleSubmit = async () => {
     if (!form.client_name.trim()) return toast.error('Nome do cliente é obrigatório');
     setSaving(true);
@@ -245,10 +293,42 @@ const NewTemplateModal: React.FC<{ onClose: () => void; onCreated: () => void }>
         </div>
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
+            <div className="col-span-2 relative" ref={dropdownRef}>
               <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1">Nome do Cliente *</label>
-              <input value={form.client_name} onChange={e => set('client_name', e.target.value)} placeholder="Ex: BRF Dourados" autoFocus
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:border-[#007a33] focus:outline-none" />
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input value={form.client_name} onChange={e => handleClientNameChange(e.target.value)}
+                  onFocus={() => form.client_name.length >= 2 && searchEntities(form.client_name)}
+                  placeholder="Buscar cliente cadastrado ou digitar novo..."
+                  autoFocus autoComplete="off"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-sm text-white placeholder:text-slate-600 focus:border-[#007a33] focus:outline-none" />
+                {searchLoading && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-[#007a33] border-t-transparent rounded-full animate-spin" />}
+              </div>
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl max-h-48 overflow-y-auto">
+                  {suggestions.map(entity => (
+                    <button key={entity.id} onClick={() => handleSelectEntity(entity)}
+                      className="w-full text-left px-4 py-3 hover:bg-slate-700 transition-colors border-b border-slate-700/50 last:border-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-white font-medium">{entity.name}</span>
+                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded">CADASTRADO</span>
+                      </div>
+                      {(entity.document || entity.email) && (
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          {entity.document && <span className="font-mono">{entity.document}</span>}
+                          {entity.document && entity.email && ' • '}
+                          {entity.email}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showSuggestions && suggestions.length === 0 && form.client_name.length >= 2 && !searchLoading && (
+                <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl px-4 py-3">
+                  <p className="text-xs text-slate-500">Nenhum cliente encontrado. O nome digitado será usado.</p>
+                </div>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block mb-1">Código Interno</label>

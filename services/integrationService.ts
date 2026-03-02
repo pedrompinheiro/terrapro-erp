@@ -51,7 +51,7 @@ export interface EmployeeIntegration {
   notes?: string;
   created_at: string;
   updated_at: string;
-  employee?: { id: string; full_name: string; cpf?: string; role?: string };
+  employee?: { id: string; full_name: string; cpf?: string; job_title?: string };
   template?: IntegrationTemplate;
   docs?: EmployeeIntegrationDoc[];
 }
@@ -241,23 +241,42 @@ export async function fetchTemplates(): Promise<IntegrationTemplate[]> {
 }
 
 export async function createTemplate(template: Partial<IntegrationTemplate>): Promise<IntegrationTemplate> {
-  const { data, error } = await supabase
+  // Only insert columns that definitely exist in the DB
+  // Optional columns (unit_name, contact_*, alert_days, block_grace_days) may not exist yet
+  const payload: Record<string, any> = {
+    client_name: template.client_name,
+    client_code: template.client_code || null,
+    is_active: true,
+  };
+
+  // Try to insert with all columns first; fallback to minimal if it fails
+  const fullPayload: Record<string, any> = {
+    ...payload,
+    unit_name: template.unit_name || null,
+    contact_name: template.contact_name || null,
+    contact_phone: template.contact_phone || null,
+    contact_email: template.contact_email || null,
+    alert_days: JSON.stringify(template.alert_days || [30, 15, 7]),
+    block_on_expiry: template.block_on_expiry ?? true,
+    block_grace_days: template.block_grace_days ?? 0,
+    notes: template.notes || null,
+  };
+
+  let { data, error } = await supabase
     .from('integration_templates')
-    .insert({
-      client_name: template.client_name,
-      client_code: template.client_code,
-      unit_name: template.unit_name,
-      contact_name: template.contact_name,
-      contact_phone: template.contact_phone,
-      contact_email: template.contact_email,
-      alert_days: JSON.stringify(template.alert_days || [30, 15, 7]),
-      block_on_expiry: template.block_on_expiry ?? true,
-      block_grace_days: template.block_grace_days ?? 0,
-      notes: template.notes,
-      is_active: true,
-    })
+    .insert(fullPayload)
     .select()
     .single();
+
+  // Fallback: if columns don't exist, insert minimal payload
+  if (error && error.code === 'PGRST204') {
+    ({ data, error } = await supabase
+      .from('integration_templates')
+      .insert(payload)
+      .select()
+      .single());
+  }
+
   if (error) throw error;
   return data;
 }
@@ -266,12 +285,25 @@ export async function updateTemplate(id: string, updates: Partial<IntegrationTem
   const payload: any = { ...updates, updated_at: new Date().toISOString() };
   if (updates.alert_days) payload.alert_days = JSON.stringify(updates.alert_days);
   delete payload.items;
-  const { data, error } = await supabase
+
+  let { data, error } = await supabase
     .from('integration_templates')
     .update(payload)
     .eq('id', id)
     .select()
     .single();
+
+  // Fallback: remove unknown columns and retry
+  if (error && error.code === 'PGRST204') {
+    const safePayload: any = { client_name: payload.client_name, client_code: payload.client_code, is_active: payload.is_active, updated_at: payload.updated_at };
+    ({ data, error } = await supabase
+      .from('integration_templates')
+      .update(safePayload)
+      .eq('id', id)
+      .select()
+      .single());
+  }
+
   if (error) throw error;
   return data;
 }
@@ -321,8 +353,8 @@ export async function fetchEmployeeIntegrations(): Promise<EmployeeIntegration[]
     .from('employee_integrations')
     .select(`
       *,
-      employee:employees(id, full_name, cpf, role),
-      template:integration_templates(id, client_name, client_code, unit_name, alert_days, block_on_expiry),
+      employee:employees(id, full_name, cpf, job_title, registration_number),
+      template:integration_templates(*),
       docs:employee_integration_docs(*, template_item:integration_template_items(*))
     `)
     .order('created_at', { ascending: false });
@@ -387,19 +419,23 @@ export async function uploadDocFile(file: File, integrationId: string, docId: st
   const ext = file.name.split('.').pop();
   const path = `integrations/${integrationId}/${docId}_v${newVersion}.${ext}`;
 
-  const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+  const { error: uploadError } = await supabase.storage.from('integration-docs').upload(path, file, { upsert: true });
   if (uploadError) throw uploadError;
 
-  const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path);
+  const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(path);
 
-  // Save version history
-  await supabase.from('integration_doc_versions').insert({
-    doc_id: docId,
-    version_number: newVersion,
-    file_url: urlData.publicUrl,
-    file_name: file.name,
-    file_size: file.size,
-  });
+  // Save version history (non-blocking - upload already succeeded)
+  try {
+    await supabase.from('integration_doc_versions').insert({
+      doc_id: docId,
+      version_number: newVersion,
+      file_url: urlData.publicUrl,
+      file_name: file.name,
+      file_size: file.size,
+    });
+  } catch (e) {
+    console.warn('Falha ao salvar histórico de versão:', e);
+  }
 
   return { url: urlData.publicUrl, version: newVersion };
 }
@@ -416,8 +452,8 @@ export async function fetchDocVersions(docId: string): Promise<DocVersion[]> {
 
 // ============ EMPLOYEES ============
 
-export async function fetchEmployees(): Promise<{ id: string; full_name: string; cpf?: string; role?: string }[]> {
-  const { data, error } = await supabase.from('employees').select('id, full_name, cpf, role').order('full_name');
+export async function fetchEmployees(): Promise<{ id: string; full_name: string; cpf?: string; job_title?: string }[]> {
+  const { data, error } = await supabase.from('employees').select('id, full_name, cpf, job_title, registration_number').order('full_name');
   if (error) throw error;
   return data || [];
 }

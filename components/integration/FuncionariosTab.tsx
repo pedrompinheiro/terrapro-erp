@@ -133,7 +133,7 @@ const FuncionariosTab: React.FC = () => {
                         <h3 className="text-white font-bold text-sm">{ei.employee?.full_name || 'Funcionário'}</h3>
                         <span className="text-slate-600">→</span>
                         <span className="text-[#007a33] font-bold text-sm">{ei.template?.client_name || 'Cliente'}</span>
-                        {ei.employee?.role && <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded">{ei.employee.role}</span>}
+                        {ei.employee?.job_title && <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded">{ei.employee.job_title}</span>}
                       </div>
                       <div className="flex items-center gap-3 mt-1">
                         <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase flex items-center gap-1 ${STATUS_COLORS[ei.status] || STATUS_COLORS.PENDENTE}`}>
