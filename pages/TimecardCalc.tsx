@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Calculator, Calendar, Clock, User, ChevronLeft, ChevronRight, Download, Loader2, Moon, AlertCircle, CheckCircle, Sun, CloudSun, Briefcase, RefreshCw } from 'lucide-react';
+import { Calculator, Calendar, Clock, User, ChevronLeft, ChevronRight, Download, Loader2, Moon, AlertCircle, CheckCircle, Sun, CloudSun, Briefcase, RefreshCw, Shield } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
     calculateMonth,
@@ -35,6 +35,14 @@ interface ShiftOption {
     weekly_hours: number;
 }
 
+interface JustificationType {
+    id: string;
+    code: string;
+    name: string;
+    excuses_absence: boolean;
+    affects_dsr: boolean;
+}
+
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DOW_SHORT = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 
@@ -50,11 +58,13 @@ const TimecardCalc: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [companyFilter, setCompanyFilter] = useState('');
     const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+    const [justificationTypes, setJustificationTypes] = useState<JustificationType[]>([]);
 
     useEffect(() => {
         fetchEmployees();
         fetchShifts();
         fetchCompanies();
+        fetchJustificationTypes();
     }, []);
 
     const fetchEmployees = async () => {
@@ -83,6 +93,47 @@ const TimecardCalc: React.FC = () => {
             .select('id, name')
             .order('name');
         setCompanies(data || []);
+    };
+
+    const fetchJustificationTypes = async () => {
+        const { data } = await supabase
+            .from('absence_justifications')
+            .select('id, code, name, excuses_absence, affects_dsr')
+            .eq('active', true)
+            .order('name');
+        setJustificationTypes(data || []);
+    };
+
+    const handleSetJustification = async (day: DayCalculation, justCode: string | null) => {
+        if (!selectedEmployee) return;
+
+        // Atualizar no banco
+        const { error } = await supabase
+            .from('time_entries')
+            .update({ justification: justCode })
+            .eq('employee_id', selectedEmployee)
+            .eq('date', day.date);
+
+        if (error) {
+            // Se não existe entry para esse dia (dia sem batida), criar um
+            if (justCode) {
+                const { error: insertErr } = await supabase
+                    .from('time_entries')
+                    .upsert({
+                        employee_id: selectedEmployee,
+                        date: day.date,
+                        justification: justCode,
+                    }, { onConflict: 'employee_id,date' as any });
+                if (insertErr) {
+                    console.error('Erro ao salvar justificativa:', insertErr);
+                    alert('Erro ao salvar justificativa: ' + insertErr.message);
+                    return;
+                }
+            }
+        }
+
+        // Recalcular
+        await handleCalculate();
     };
 
     const filteredEmployees = useMemo(() => {
@@ -633,6 +684,7 @@ const TimecardCalc: React.FC = () => {
                                                             <th className="px-2 py-2.5 text-center">Esper.</th>
                                                             <th className="px-2 py-2.5 text-center text-emerald-600">Extra</th>
                                                             <th className="px-2 py-2.5 text-center text-red-600">Falta</th>
+                                                            <th className="px-2 py-2.5 text-center text-cyan-600">Just.</th>
                                                             <th className="px-2 py-2.5 text-center text-indigo-600">Not.</th>
                                                         </tr>
                                                     </thead>
@@ -669,6 +721,28 @@ const TimecardCalc: React.FC = () => {
                                                                     <td className="px-2 py-2 text-center font-mono text-slate-500">{day.expectedMinutes > 0 ? minutesToHHMM(day.expectedMinutes) : <span className="text-slate-700">--:--</span>}</td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-emerald-400">{day.overtimeMinutes > 0 ? minutesToHHMM(day.overtimeMinutes) : ''}</td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-red-400">{day.absenceMinutes > 0 ? minutesToHHMM(day.absenceMinutes) : ''}</td>
+                                                                    <td className="px-1 py-1 text-center">
+                                                                        {(day.hasAbsence || day.isMissing || day.justification) && (day.dayType === 'weekday' || day.dayType === 'saturday') ? (
+                                                                            <select
+                                                                                value={day.justification || ''}
+                                                                                onChange={e => handleSetJustification(day, e.target.value || null)}
+                                                                                className={`w-full bg-slate-950 border rounded px-1 py-0.5 text-[10px] outline-none cursor-pointer ${
+                                                                                    day.justification
+                                                                                        ? 'border-cyan-500/50 text-cyan-400 font-bold'
+                                                                                        : 'border-slate-700 text-slate-500'
+                                                                                }`}
+                                                                            >
+                                                                                <option value="">—</option>
+                                                                                {justificationTypes.map(jt => (
+                                                                                    <option key={jt.code} value={jt.code}>{jt.name}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        ) : day.justification ? (
+                                                                            <span className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded font-bold">
+                                                                                {justificationTypes.find(j => j.code === day.justification)?.name || day.justification}
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </td>
                                                                     <td className="px-2 py-2 text-center font-mono text-indigo-400">{day.nightMinutes > 0 ? minutesToHHMM(day.nightMinutes) : ''}</td>
                                                                 </tr>
                                                             );
@@ -681,6 +755,11 @@ const TimecardCalc: React.FC = () => {
                                                             <td className="px-2 py-3 text-center font-mono text-slate-400">{minutesToHHMM(calculation.totalExpected)}</td>
                                                             <td className="px-2 py-3 text-center font-mono text-emerald-400">{minutesToHHMM(calculation.overtime50 + calculation.overtime100)}</td>
                                                             <td className="px-2 py-3 text-center font-mono text-red-400">{minutesToHHMM(calculation.totalAbsence)}</td>
+                                                            <td className="px-2 py-3 text-center text-[10px] text-cyan-400">
+                                                                {calculation.days.filter(d => d.justification).length > 0 && (
+                                                                    <span>{calculation.days.filter(d => d.justification).length} just.</span>
+                                                                )}
+                                                            </td>
                                                             <td className="px-2 py-3 text-center font-mono text-indigo-400">{minutesToHHMM(calculation.nightHours)}</td>
                                                         </tr>
                                                     </tfoot>
