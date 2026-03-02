@@ -575,7 +575,7 @@ const HRManagement: React.FC = () => {
                     // --- MODO TURBO (GEMINI AI) ---
                     const base64 = await fileToBase64(newResults[i].file);
 
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`, {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
