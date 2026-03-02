@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, CalendarDays, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2 } from 'lucide-react';
+import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, CalendarDays, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2, Undo2 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 
@@ -873,6 +873,104 @@ const Financial: React.FC = () => {
     });
   };
 
+  // Baixa em massa: baixar todos os pendentes selecionados
+  const handleBulkSettle = () => {
+    const selected = transactions.filter(t => selectedIds.has(t.id));
+    const pendentes = selected.filter(t => t.status !== 'PAID' && t.status !== 'CANCELADO');
+    if (pendentes.length === 0) { toast.error("Nenhum lançamento pendente selecionado"); return; }
+
+    const totalValor = pendentes.reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+    const msg = `Baixar ${pendentes.length} lançamento(s) no valor total de R$ ${totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}?`;
+    if (!confirm(msg)) return;
+
+    handleSecurityCheck(async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      let ok = 0, erros = 0;
+
+      for (const t of pendentes) {
+        try {
+          if (t.type === 'INCOME') {
+            await receivableService.receber(t.originalId, {
+              valor_recebido: t.valorOriginal || Math.abs(t.amount),
+              data_recebimento: today,
+              forma_recebimento: 'TRANSFERENCIA',
+              observacao: 'Baixa em massa via ERP'
+            });
+          } else {
+            await paymentService.pagar(t.originalId, {
+              valor_pago: t.valorOriginal || Math.abs(t.amount),
+              data_pagamento: today,
+              forma_pagamento: 'TRANSFERENCIA',
+              observacao: 'Baixa em massa via ERP'
+            });
+          }
+          ok++;
+        } catch (err) {
+          console.error(`Erro ao baixar ${t.id}:`, err);
+          erros++;
+        }
+      }
+
+      if (erros === 0) {
+        toast.success(`${ok} lançamento(s) baixado(s) com sucesso!`);
+      } else {
+        toast.error(`${ok} baixado(s), ${erros} erro(s)`);
+      }
+      setSelectedIds(new Set());
+      loadData();
+      loadBankAccounts();
+    });
+  };
+
+  // Estorno: reverter baixa de um lançamento pago
+  const handleEstorno = (e: React.MouseEvent, tr: UnifiedTransaction) => {
+    e.stopPropagation();
+    if (tr.status !== 'PAID') { toast.error("Apenas lançamentos pagos/recebidos podem ser estornados"); return; }
+
+    handleSecurityCheck(async () => {
+      try {
+        if (tr.type === 'INCOME') {
+          // Reverter recebimento
+          const { error } = await supabase.from('contas_receber').update({
+            status: 'PENDENTE',
+            valor_recebido: null,
+            data_recebimento: null,
+            forma_recebimento: null,
+            banco_id: null,
+          }).eq('id', tr.originalId);
+          if (error) throw error;
+
+          // Remover movimento bancário associado
+          await supabase.from('movimentos_bancarios').delete()
+            .eq('lancamento_financeiro_id', tr.originalId)
+            .eq('lancamento_tipo', 'RECEBER');
+        } else {
+          // Reverter pagamento
+          const { error } = await supabase.from('contas_pagar').update({
+            status: 'PENDENTE',
+            valor_pago: null,
+            data_pagamento: null,
+            forma_pagamento: null,
+            banco_id: null,
+          }).eq('id', tr.originalId);
+          if (error) throw error;
+
+          // Remover movimento bancário
+          await supabase.from('movimentos_bancarios').delete()
+            .eq('lancamento_financeiro_id', tr.originalId)
+            .eq('lancamento_tipo', 'PAGAR');
+        }
+
+        toast.success("Estorno realizado! Lançamento voltou para Pendente.");
+        loadData();
+        loadBankAccounts();
+      } catch (error) {
+        console.error(error);
+        toast.error("Erro ao estornar lançamento");
+      }
+    });
+  };
+
   if (loading && transactions.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -1121,28 +1219,62 @@ const Financial: React.FC = () => {
           )}
         </div>
 
-        {selectedIds.size > 0 && (
-          <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 mb-2">
-            <span className="text-sm text-blue-400 font-bold">
-              {selectedIds.size} lançamento{selectedIds.size > 1 ? 's' : ''} selecionado{selectedIds.size > 1 ? 's' : ''}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                Limpar Seleção
-              </button>
-              <button
-                onClick={handleBulkDelete}
-                className="flex items-center gap-1.5 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
-              >
-                <Trash2 size={14} />
-                Excluir Selecionados
-              </button>
+        {selectedIds.size > 0 && (() => {
+          const selected = transactions.filter(t => selectedIds.has(t.id));
+          const totalReceitas = selected.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+          const totalDespesas = selected.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+          const pendentes = selected.filter(t => t.status !== 'PAID' && t.status !== 'CANCELADO');
+          return (
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 mb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-sm text-blue-400 font-bold">
+                  {selectedIds.size} selecionado{selectedIds.size > 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-3 text-xs">
+                  {totalReceitas > 0 && (
+                    <span className="text-emerald-400 font-mono font-bold">
+                      ↑ R$ {totalReceitas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                  {totalDespesas > 0 && (
+                    <span className="text-rose-400 font-mono font-bold">
+                      ↓ R$ {totalDespesas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                  <span className="text-white font-mono font-black">
+                    = R$ {(totalReceitas - totalDespesas).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+                >
+                  Limpar
+                </button>
+                {pendentes.length > 0 && (
+                  <button
+                    onClick={handleBulkSettle}
+                    className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition-colors"
+                  >
+                    <CheckCircle size={14} />
+                    Baixar {pendentes.length} Pendente{pendentes.length > 1 ? 's' : ''}
+                  </button>
+                )}
+                <button
+                  onClick={handleBulkDelete}
+                  className="flex items-center gap-1.5 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+                >
+                  <Trash2 size={14} />
+                  Excluir
+                </button>
+              </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -1222,6 +1354,15 @@ const Financial: React.FC = () => {
                             title="Editar Lançamento"
                           >
                             <Pencil size={16} />
+                          </button>
+                        )}
+                        {(tr.status === 'PAID') && (
+                          <button
+                            onClick={(e) => handleEstorno(e, tr)}
+                            className="p-2 rounded-lg text-slate-600 hover:text-amber-400 hover:bg-slate-800 transition-colors"
+                            title="Estornar Baixa"
+                          >
+                            <Undo2 size={16} />
                           </button>
                         )}
                         <button
