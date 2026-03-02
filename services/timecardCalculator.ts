@@ -80,6 +80,7 @@ export interface TimeEntry {
     is_compensated: boolean;
     is_off_day: boolean;
     justification: string | null;
+    justification2: string | null;
     work_shift_id: string | null;
 }
 
@@ -113,8 +114,9 @@ export interface DayCalculation {
     isComplete: boolean;
     isMissing: boolean; // Dia sem nenhuma batida
 
-    // Justificativa
-    justification: string | null;
+    // Justificativa por período
+    justification: string | null;   // Período 1 (Ent.1/Saí.1)
+    justification2: string | null;  // Período 2 (Ent.2/Saí.2)
 }
 
 export interface MonthCalculation {
@@ -468,6 +470,7 @@ export const calculateDay = (
 
     // Verificar se o dia tem justificativa que abona a falta
     const entryJustification = entry?.justification || null;
+    const entryJustification2 = entry?.justification2 || null;
     const justType = entryJustification && justificationTypes
         ? justificationTypes.find(j => j.code === entryJustification)
         : null;
@@ -500,6 +503,7 @@ export const calculateDay = (
             isComplete: false,
             isMissing: isExcused ? false : rawIsMissing,
             justification: entryJustification,
+            justification2: entryJustification2,
         };
     }
 
@@ -618,6 +622,7 @@ export const calculateDay = (
         isComplete: workedMin > 0 && !!(punches.entrada1 && punches.saida1),
         isMissing: finalIsMissing,
         justification: entryJustification,
+        justification2: entryJustification2,
     };
 };
 

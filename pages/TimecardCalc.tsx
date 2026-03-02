@@ -62,6 +62,8 @@ const TimecardCalc: React.FC = () => {
     const [justificationTypes, setJustificationTypes] = useState<JustificationType[]>([]);
     // Estado local para edições de batidas (antes de salvar)
     const [editedPunches, setEditedPunches] = useState<Record<string, Record<string, string>>>({});
+    // Seletor de justificativa inline: "date-period" (ex: "2026-03-02-1" ou "2026-03-02-2")
+    const [justPopover, setJustPopover] = useState<string | null>(null);
 
     useEffect(() => {
         fetchEmployees();
@@ -218,6 +220,49 @@ const TimecardCalc: React.FC = () => {
         }
         return (day.punches as any)[field] || '';
     }, [editedPunches]);
+
+    // Salvar justificativa por período (1 ou 2)
+    const handleSetPeriodJustification = useCallback(async (day: DayCalculation, period: 1 | 2, justCode: string | null) => {
+        if (!selectedEmployee) return;
+        const emp = employees.find(e => e.id === selectedEmployee);
+        const dbField = period === 1 ? 'justification' : 'justification2';
+
+        const { data: existing } = await supabase
+            .from('time_entries')
+            .select('id')
+            .eq('employee_id', selectedEmployee)
+            .eq('date', day.date)
+            .maybeSingle();
+
+        if (existing) {
+            await supabase
+                .from('time_entries')
+                .update({ [dbField]: justCode })
+                .eq('id', existing.id);
+        } else if (justCode) {
+            await supabase
+                .from('time_entries')
+                .insert({
+                    employee_id: selectedEmployee,
+                    company_id: emp?.company_id || null,
+                    date: day.date,
+                    [dbField]: justCode,
+                });
+        }
+
+        setJustPopover(null);
+        await handleCalculate();
+    }, [selectedEmployee, employees]);
+
+    // Detecta se tecla é letra → abre seletor de justificativa
+    const handleTimeKeyDown = useCallback((e: React.KeyboardEvent, day: DayCalculation, period: 1 | 2) => {
+        const key = e.key;
+        // Se digitou letra (não número, não tecla especial)
+        if (key.length === 1 && /[a-zA-Z]/.test(key)) {
+            e.preventDefault();
+            setJustPopover(`${day.date}-${period}`);
+        }
+    }, []);
 
     const filteredEmployees = useMemo(() => {
         return employees.filter(e => {
@@ -768,7 +813,6 @@ const TimecardCalc: React.FC = () => {
                                                             <th className="px-2 py-2.5 text-center">Esper.</th>
                                                             <th className="px-2 py-2.5 text-center text-emerald-600">Extra</th>
                                                             <th className="px-2 py-2.5 text-center text-red-600">Falta</th>
-                                                            <th className="px-2 py-2.5 text-center text-cyan-600">Just.</th>
                                                             <th className="px-2 py-2.5 text-center text-indigo-600">Not.</th>
                                                         </tr>
                                                     </thead>
@@ -797,68 +841,134 @@ const TimecardCalc: React.FC = () => {
                                                                             <span className="text-[9px] text-slate-600">ÚTL</span>
                                                                         )}
                                                                     </td>
-                                                                    <td className="px-1 py-1 text-center">
-                                                                        <TimeInput
-                                                                            value={getPunchValue(day, 'entrada1')}
-                                                                            onChange={(v) => handleUpdatePunch(day.date, 'entrada1', v)}
-                                                                            onBlurSave={() => handleSavePunch(day, 'entrada1')}
-                                                                            placeholder="--:--"
-                                                                            dark
-                                                                        />
-                                                                    </td>
-                                                                    <td className="px-1 py-1 text-center">
-                                                                        <TimeInput
-                                                                            value={getPunchValue(day, 'saida1')}
-                                                                            onChange={(v) => handleUpdatePunch(day.date, 'saida1', v)}
-                                                                            onBlurSave={() => handleSavePunch(day, 'saida1')}
-                                                                            placeholder="--:--"
-                                                                            dark
-                                                                        />
-                                                                    </td>
-                                                                    <td className="px-1 py-1 text-center">
-                                                                        <TimeInput
-                                                                            value={getPunchValue(day, 'entrada2')}
-                                                                            onChange={(v) => handleUpdatePunch(day.date, 'entrada2', v)}
-                                                                            onBlurSave={() => handleSavePunch(day, 'entrada2')}
-                                                                            placeholder="--:--"
-                                                                            dark
-                                                                        />
-                                                                    </td>
-                                                                    <td className="px-1 py-1 text-center">
-                                                                        <TimeInput
-                                                                            value={getPunchValue(day, 'saida2')}
-                                                                            onChange={(v) => handleUpdatePunch(day.date, 'saida2', v)}
-                                                                            onBlurSave={() => handleSavePunch(day, 'saida2')}
-                                                                            placeholder="--:--"
-                                                                            dark
-                                                                        />
-                                                                    </td>
+                                                                    {/* PERÍODO 1: Ent.1 + Saí.1 */}
+                                                                    {day.justification ? (
+                                                                        <>
+                                                                            <td colSpan={2} className="px-1 py-1 text-center relative">
+                                                                                <button
+                                                                                    onClick={() => setJustPopover(justPopover === `${day.date}-1` ? null : `${day.date}-1`)}
+                                                                                    className="w-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded px-2 py-1 text-[10px] font-bold hover:bg-cyan-500/20 transition-colors flex items-center justify-center gap-1"
+                                                                                    title="Clique para alterar ou remover justificativa"
+                                                                                >
+                                                                                    {justificationTypes.find(j => j.code === day.justification)?.name || day.justification}
+                                                                                    <span className="text-cyan-600 text-[8px]">▼</span>
+                                                                                </button>
+                                                                                {justPopover === `${day.date}-1` && (
+                                                                                    <div className="absolute z-50 top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[140px]">
+                                                                                        <button onClick={() => handleSetPeriodJustification(day, 1, null)} className="w-full text-left px-3 py-1.5 text-[11px] text-red-400 hover:bg-slate-800 font-bold">✕ Remover</button>
+                                                                                        {justificationTypes.map(jt => (
+                                                                                            <button key={jt.code} onClick={() => handleSetPeriodJustification(day, 1, jt.code)}
+                                                                                                className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-slate-800 ${day.justification === jt.code ? 'text-cyan-400 font-bold' : 'text-slate-300'}`}>
+                                                                                                {jt.name}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <td className="px-1 py-1 text-center relative">
+                                                                                <div onKeyDown={(e) => handleTimeKeyDown(e, day, 1)}>
+                                                                                    <TimeInput
+                                                                                        value={getPunchValue(day, 'entrada1')}
+                                                                                        onChange={(v) => handleUpdatePunch(day.date, 'entrada1', v)}
+                                                                                        onBlurSave={() => handleSavePunch(day, 'entrada1')}
+                                                                                        placeholder="--:--"
+                                                                                        dark
+                                                                                    />
+                                                                                </div>
+                                                                                {justPopover === `${day.date}-1` && (
+                                                                                    <div className="absolute z-50 top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[140px]">
+                                                                                        <button onClick={() => setJustPopover(null)} className="w-full text-left px-3 py-1.5 text-[11px] text-slate-500 hover:bg-slate-800">Cancelar</button>
+                                                                                        {justificationTypes.map(jt => (
+                                                                                            <button key={jt.code} onClick={() => handleSetPeriodJustification(day, 1, jt.code)}
+                                                                                                className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800 hover:text-cyan-400">
+                                                                                                {jt.name}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                            <td className="px-1 py-1 text-center">
+                                                                                <div onKeyDown={(e) => handleTimeKeyDown(e, day, 1)}>
+                                                                                    <TimeInput
+                                                                                        value={getPunchValue(day, 'saida1')}
+                                                                                        onChange={(v) => handleUpdatePunch(day.date, 'saida1', v)}
+                                                                                        onBlurSave={() => handleSavePunch(day, 'saida1')}
+                                                                                        placeholder="--:--"
+                                                                                        dark
+                                                                                    />
+                                                                                </div>
+                                                                            </td>
+                                                                        </>
+                                                                    )}
+                                                                    {/* PERÍODO 2: Ent.2 + Saí.2 */}
+                                                                    {day.justification2 ? (
+                                                                        <>
+                                                                            <td colSpan={2} className="px-1 py-1 text-center relative">
+                                                                                <button
+                                                                                    onClick={() => setJustPopover(justPopover === `${day.date}-2` ? null : `${day.date}-2`)}
+                                                                                    className="w-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded px-2 py-1 text-[10px] font-bold hover:bg-cyan-500/20 transition-colors flex items-center justify-center gap-1"
+                                                                                    title="Clique para alterar ou remover justificativa"
+                                                                                >
+                                                                                    {justificationTypes.find(j => j.code === day.justification2)?.name || day.justification2}
+                                                                                    <span className="text-cyan-600 text-[8px]">▼</span>
+                                                                                </button>
+                                                                                {justPopover === `${day.date}-2` && (
+                                                                                    <div className="absolute z-50 top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[140px]">
+                                                                                        <button onClick={() => handleSetPeriodJustification(day, 2, null)} className="w-full text-left px-3 py-1.5 text-[11px] text-red-400 hover:bg-slate-800 font-bold">✕ Remover</button>
+                                                                                        {justificationTypes.map(jt => (
+                                                                                            <button key={jt.code} onClick={() => handleSetPeriodJustification(day, 2, jt.code)}
+                                                                                                className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-slate-800 ${day.justification2 === jt.code ? 'text-cyan-400 font-bold' : 'text-slate-300'}`}>
+                                                                                                {jt.name}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <td className="px-1 py-1 text-center relative">
+                                                                                <div onKeyDown={(e) => handleTimeKeyDown(e, day, 2)}>
+                                                                                    <TimeInput
+                                                                                        value={getPunchValue(day, 'entrada2')}
+                                                                                        onChange={(v) => handleUpdatePunch(day.date, 'entrada2', v)}
+                                                                                        onBlurSave={() => handleSavePunch(day, 'entrada2')}
+                                                                                        placeholder="--:--"
+                                                                                        dark
+                                                                                    />
+                                                                                </div>
+                                                                                {justPopover === `${day.date}-2` && (
+                                                                                    <div className="absolute z-50 top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[140px]">
+                                                                                        <button onClick={() => setJustPopover(null)} className="w-full text-left px-3 py-1.5 text-[11px] text-slate-500 hover:bg-slate-800">Cancelar</button>
+                                                                                        {justificationTypes.map(jt => (
+                                                                                            <button key={jt.code} onClick={() => handleSetPeriodJustification(day, 2, jt.code)}
+                                                                                                className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800 hover:text-cyan-400">
+                                                                                                {jt.name}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                            <td className="px-1 py-1 text-center">
+                                                                                <div onKeyDown={(e) => handleTimeKeyDown(e, day, 2)}>
+                                                                                    <TimeInput
+                                                                                        value={getPunchValue(day, 'saida2')}
+                                                                                        onChange={(v) => handleUpdatePunch(day.date, 'saida2', v)}
+                                                                                        onBlurSave={() => handleSavePunch(day, 'saida2')}
+                                                                                        placeholder="--:--"
+                                                                                        dark
+                                                                                    />
+                                                                                </div>
+                                                                            </td>
+                                                                        </>
+                                                                    )}
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-white">{day.workedMinutes > 0 ? minutesToHHMM(day.workedMinutes) : <span className="text-slate-700">--:--</span>}</td>
                                                                     <td className="px-2 py-2 text-center font-mono text-slate-500">{day.expectedMinutes > 0 ? minutesToHHMM(day.expectedMinutes) : <span className="text-slate-700">--:--</span>}</td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-emerald-400">{day.overtimeMinutes > 0 ? minutesToHHMM(day.overtimeMinutes) : ''}</td>
                                                                     <td className="px-2 py-2 text-center font-mono font-bold text-red-400">{day.absenceMinutes > 0 ? minutesToHHMM(day.absenceMinutes) : ''}</td>
-                                                                    <td className="px-1 py-1 text-center">
-                                                                        {(day.hasAbsence || day.isMissing || day.justification) && (day.dayType === 'weekday' || day.dayType === 'saturday') ? (
-                                                                            <select
-                                                                                value={day.justification || ''}
-                                                                                onChange={e => handleSetJustification(day, e.target.value || null)}
-                                                                                className={`w-full bg-slate-950 border rounded px-1 py-0.5 text-[10px] outline-none cursor-pointer ${
-                                                                                    day.justification
-                                                                                        ? 'border-cyan-500/50 text-cyan-400 font-bold'
-                                                                                        : 'border-slate-700 text-slate-500'
-                                                                                }`}
-                                                                            >
-                                                                                <option value="">—</option>
-                                                                                {justificationTypes.map(jt => (
-                                                                                    <option key={jt.code} value={jt.code}>{jt.name}</option>
-                                                                                ))}
-                                                                            </select>
-                                                                        ) : day.justification ? (
-                                                                            <span className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded font-bold">
-                                                                                {justificationTypes.find(j => j.code === day.justification)?.name || day.justification}
-                                                                            </span>
-                                                                        ) : null}
-                                                                    </td>
                                                                     <td className="px-2 py-2 text-center font-mono text-indigo-400">{day.nightMinutes > 0 ? minutesToHHMM(day.nightMinutes) : ''}</td>
                                                                 </tr>
                                                             );
@@ -871,11 +981,6 @@ const TimecardCalc: React.FC = () => {
                                                             <td className="px-2 py-3 text-center font-mono text-slate-400">{minutesToHHMM(calculation.totalExpected)}</td>
                                                             <td className="px-2 py-3 text-center font-mono text-emerald-400">{minutesToHHMM(calculation.overtime50 + calculation.overtime100)}</td>
                                                             <td className="px-2 py-3 text-center font-mono text-red-400">{minutesToHHMM(calculation.totalAbsence)}</td>
-                                                            <td className="px-2 py-3 text-center text-[10px] text-cyan-400">
-                                                                {calculation.days.filter(d => d.justification).length > 0 && (
-                                                                    <span>{calculation.days.filter(d => d.justification).length} just.</span>
-                                                                )}
-                                                            </td>
                                                             <td className="px-2 py-3 text-center font-mono text-indigo-400">{minutesToHHMM(calculation.nightHours)}</td>
                                                         </tr>
                                                     </tfoot>
