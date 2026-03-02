@@ -3,10 +3,12 @@ import React, { useRef, useCallback } from 'react';
 interface TimeInputProps {
     value: string | null;
     onChange: (value: string) => void;
+    onBlurSave?: () => void;
     placeholder?: string;
     disabled?: boolean;
     className?: string;
     tabIndex?: number;
+    dark?: boolean;
 }
 
 /**
@@ -24,10 +26,12 @@ interface TimeInputProps {
 const TimeInput: React.FC<TimeInputProps> = ({
     value,
     onChange,
+    onBlurSave,
     placeholder = '--:--',
     disabled = false,
     className = '',
     tabIndex,
+    dark = false,
 }) => {
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -156,7 +160,11 @@ const TimeInput: React.FC<TimeInputProps> = ({
         } else if (val && val.length < 3) {
             onChange('');
         }
-    }, [formatTime, validateTime, onChange]);
+        // Callback externo (ex: salvar no banco)
+        if (onBlurSave) {
+            setTimeout(onBlurSave, 50);
+        }
+    }, [formatTime, validateTime, onChange, onBlurSave]);
 
     return (
         <input
@@ -174,9 +182,13 @@ const TimeInput: React.FC<TimeInputProps> = ({
             maxLength={5}
             tabIndex={tabIndex}
             className={`w-16 px-1.5 py-1 text-center text-xs font-mono rounded border transition-colors outline-none ${
-                value
-                    ? 'border-slate-200 bg-white text-slate-700 focus:border-violet-400 focus:ring-1 focus:ring-violet-200'
-                    : 'border-transparent bg-transparent text-slate-300 focus:border-slate-300 focus:bg-white focus:text-slate-700'
+                dark
+                    ? (value
+                        ? 'border-slate-600 bg-transparent text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 focus:bg-slate-800'
+                        : 'border-transparent bg-transparent text-slate-500 focus:border-slate-600 focus:bg-slate-800 focus:text-white')
+                    : (value
+                        ? 'border-slate-200 bg-white text-slate-700 focus:border-violet-400 focus:ring-1 focus:ring-violet-200'
+                        : 'border-transparent bg-transparent text-slate-300 focus:border-slate-300 focus:bg-white focus:text-slate-700')
             } ${className}`}
         />
     );

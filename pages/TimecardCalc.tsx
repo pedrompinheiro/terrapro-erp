@@ -107,28 +107,35 @@ const TimecardCalc: React.FC = () => {
     const handleSetJustification = async (day: DayCalculation, justCode: string | null) => {
         if (!selectedEmployee) return;
 
-        // Atualizar no banco
-        const { error } = await supabase
-            .from('time_entries')
-            .update({ justification: justCode })
-            .eq('employee_id', selectedEmployee)
-            .eq('date', day.date);
+        const emp = employees.find(e => e.id === selectedEmployee);
 
-        if (error) {
-            // Se não existe entry para esse dia (dia sem batida), criar um
-            if (justCode) {
-                const { error: insertErr } = await supabase
-                    .from('time_entries')
-                    .upsert({
-                        employee_id: selectedEmployee,
-                        date: day.date,
-                        justification: justCode,
-                    }, { onConflict: 'employee_id,date' as any });
-                if (insertErr) {
-                    console.error('Erro ao salvar justificativa:', insertErr);
-                    alert('Erro ao salvar justificativa: ' + insertErr.message);
-                    return;
-                }
+        // Tentar atualizar entry existente
+        const { data: existing } = await supabase
+            .from('time_entries')
+            .select('id')
+            .eq('employee_id', selectedEmployee)
+            .eq('date', day.date)
+            .maybeSingle();
+
+        if (existing) {
+            await supabase
+                .from('time_entries')
+                .update({ justification: justCode })
+                .eq('id', existing.id);
+        } else if (justCode) {
+            // Criar entry se não existe (incluindo company_id obrigatório)
+            const { error: insertErr } = await supabase
+                .from('time_entries')
+                .insert({
+                    employee_id: selectedEmployee,
+                    company_id: emp?.company_id || null,
+                    date: day.date,
+                    justification: justCode,
+                });
+            if (insertErr) {
+                console.error('Erro ao salvar justificativa:', insertErr);
+                alert('Erro ao salvar justificativa: ' + insertErr.message);
+                return;
             }
         }
 
