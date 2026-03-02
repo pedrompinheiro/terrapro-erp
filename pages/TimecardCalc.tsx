@@ -144,8 +144,8 @@ const TimecardCalc: React.FC = () => {
             }
         }
 
-        // Recalcular
-        await handleCalculate();
+        // Recalcular silenciosamente
+        await handleCalculate(true);
     };
 
     // Mapa de campo local → coluna no banco
@@ -204,13 +204,8 @@ const TimecardCalc: React.FC = () => {
             }
         }
 
-        // Limpar edições locais desse dia e recalcular
-        setEditedPunches(prev => {
-            const copy = { ...prev };
-            delete copy[day.date];
-            return copy;
-        });
-        await handleCalculate();
+        // Recalcular silenciosamente (sem piscar loading)
+        await handleCalculate(true);
     }, [selectedEmployee, employees, editedPunches]);
 
     // Pega o valor do punch: prioriza edição local, senão usa o calculado
@@ -251,7 +246,7 @@ const TimecardCalc: React.FC = () => {
         }
 
         setJustPopover(null);
-        await handleCalculate();
+        await handleCalculate(true);
     }, [selectedEmployee, employees]);
 
     // Detecta se tecla é letra → abre seletor de justificativa
@@ -274,14 +269,14 @@ const TimecardCalc: React.FC = () => {
         });
     }, [employees, searchTerm, companyFilter]);
 
-    const handleCalculate = async () => {
-        if (!selectedEmployee) return alert('Selecione um funcionário');
+    const handleCalculate = async (silent = false) => {
+        if (!selectedEmployee) return !silent && alert('Selecione um funcionário');
 
         const emp = employees.find(e => e.id === selectedEmployee);
         if (!emp) return;
-        if (!emp.work_shift_id) return alert('Este funcionário não tem turno definido. Atribua um turno no cadastro de funcionários.');
+        if (!emp.work_shift_id) return !silent && alert('Este funcionário não tem turno definido. Atribua um turno no cadastro de funcionários.');
 
-        setCalculating(true);
+        if (!silent) setCalculating(true);
         try {
             const result = await calculateMonth(
                 emp.id,
@@ -294,9 +289,9 @@ const TimecardCalc: React.FC = () => {
             setEditedPunches({}); // Limpa edições locais após recalcular
         } catch (err: any) {
             console.error(err);
-            alert('Erro ao calcular: ' + (err.message || err));
+            if (!silent) alert('Erro ao calcular: ' + (err.message || err));
         } finally {
-            setCalculating(false);
+            if (!silent) setCalculating(false);
         }
     };
 

@@ -507,14 +507,14 @@ export const calculateDay = (
         };
     }
 
-    // Batidas reais
+    // Batidas reais (DB retorna TIME como "HH:MM:SS", cortar pra "HH:MM")
     const punches = {
-        entrada1: entry.entry_time || '',
-        saida1: entry.break_start || '',
-        entrada2: entry.break_end || '',
-        saida2: entry.exit_time || '',
-        entrada3: entry.entry_time2 || undefined,
-        saida3: entry.break_start2 || undefined,
+        entrada1: (entry.entry_time || '').slice(0, 5),
+        saida1: (entry.break_start || '').slice(0, 5),
+        entrada2: (entry.break_end || '').slice(0, 5),
+        saida2: (entry.exit_time || '').slice(0, 5),
+        entrada3: entry.entry_time2 ? entry.entry_time2.slice(0, 5) : undefined,
+        saida3: entry.break_start2 ? entry.break_start2.slice(0, 5) : undefined,
     };
 
     // Horas trabalhadas
