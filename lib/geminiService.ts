@@ -1,9 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const getAI = () => new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
+import { getGeminiKey } from './getGeminiKey';
 
 export const analyzeFleetEfficiency = async (data: any) => {
-  const ai = getAI();
+  const key = await getGeminiKey();
+  const ai = new GoogleGenerativeAI(key);
   try {
     const model = ai.getGenerativeModel({
       model: 'gemini-1.5-flash',

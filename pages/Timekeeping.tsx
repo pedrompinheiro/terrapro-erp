@@ -60,7 +60,18 @@ const Timekeeping: React.FC = () => {
     const [savedCount, setSavedCount] = useState(0);
     const [totalToSave, setTotalToSave] = useState(0);
     const [dragOver, setDragOver] = useState(false);
+    const [hasGeminiKey, setHasGeminiKey] = useState(true);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Verificar chave Gemini
+    useEffect(() => {
+        const checkKey = async () => {
+            const { getGeminiKey } = await import('../lib/getGeminiKey');
+            const key = await getGeminiKey();
+            setHasGeminiKey(!!key);
+        };
+        checkKey();
+    }, []);
 
     // Carregar lista de funcionários
     useEffect(() => {
@@ -337,8 +348,6 @@ const Timekeeping: React.FC = () => {
     const savedCards = cards.filter(c => c.status === 'saved').length;
     const readyToSave = cards.filter(c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0).length;
 
-    const hasGeminiKey = !!import.meta.env.VITE_GEMINI_API_KEY;
-
     // ============================================
     // Render
     // ============================================
@@ -429,7 +438,7 @@ const Timekeeping: React.FC = () => {
                         <div>
                             <p className="text-sm font-semibold text-amber-800">Chave Gemini AI necessária</p>
                             <p className="text-sm text-amber-700 mt-1">
-                                Adicione <code className="bg-amber-100 px-1 rounded">VITE_GEMINI_API_KEY=sua_chave</code> no arquivo <code className="bg-amber-100 px-1 rounded">.env.local</code> para usar a leitura por IA.
+                                Configure sua chave Gemini em <strong>Configurações → Integrações & API</strong> para usar a leitura por IA.
                                 Obtenha sua chave em <span className="underline">aistudio.google.com</span>.
                             </p>
                         </div>

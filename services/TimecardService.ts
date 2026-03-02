@@ -7,8 +7,7 @@
  */
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+import { getGeminiKey } from '../lib/getGeminiKey';
 
 // ============================================
 // Tipos
@@ -110,13 +109,14 @@ const fileToBase64 = (file: File): Promise<string> => {
 // ============================================
 
 export const processTimecardImage = async (file: File): Promise<TimecardData> => {
-    if (!API_KEY) {
-        throw new Error("VITE_GEMINI_API_KEY não configurada. Adicione sua chave Gemini no arquivo .env.local");
+    const apiKey = await getGeminiKey();
+    if (!apiKey) {
+        throw new Error("Chave Gemini AI não configurada. Vá em Configurações > Integrações & API para adicionar.");
     }
 
     const base64Data = await fileToBase64(file);
 
-    const genAI = new GoogleGenerativeAI(API_KEY);
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = buildOcrPrompt();

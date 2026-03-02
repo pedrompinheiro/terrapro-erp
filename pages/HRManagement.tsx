@@ -560,7 +560,8 @@ const HRManagement: React.FC = () => {
 
     const processImages = async () => {
         setIsProcessingOCR(true);
-        const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        const { getGeminiKey } = await import('../lib/getGeminiKey');
+        const geminiKey = await getGeminiKey();
         const newResults = [...ocrResults];
 
         for (let i = 0; i < newResults.length; i++) {
