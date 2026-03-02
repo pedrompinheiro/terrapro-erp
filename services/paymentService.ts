@@ -33,6 +33,7 @@ export interface ContaPagar {
     parcela_total?: number;
     titulo_pai_id?: string;
     conciliado?: boolean;
+    filial_id?: string;
 }
 
 export interface ParcelamentoConfig {
@@ -52,6 +53,7 @@ class PaymentService {
         data_inicio?: string;
         data_fim?: string;
         vencidas?: boolean;
+        filial_id?: string;
     }) {
         let query = supabase
             .from('contas_pagar')
@@ -62,6 +64,10 @@ class PaymentService {
         centro_custo:centros_custo(codigo, nome)
       `)
             .order('data_vencimento', { ascending: false });
+
+        if (filtros?.filial_id) {
+            query = query.eq('filial_id', filtros.filial_id);
+        }
 
         if (filtros?.fornecedor_id) {
             query = query.eq('fornecedor_id', filtros.fornecedor_id);
@@ -102,6 +108,21 @@ class PaymentService {
         const { data, error } = await supabase
             .from('contas_pagar')
             .insert(conta)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
+     * Atualizar conta a pagar existente
+     */
+    async atualizar(id: string, dados: Partial<ContaPagar>) {
+        const { data, error } = await supabase
+            .from('contas_pagar')
+            .update(dados)
+            .eq('id', id)
             .select()
             .single();
 

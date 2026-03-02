@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder } from 'lucide-react'; // New icons
+import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, CalendarDays, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2, Undo2 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 
 import { receivableService, ContaReceber } from '../services/receivableService';
 import { paymentService, ContaPagar } from '../services/paymentService';
-import { bankService, ContaBancaria } from '../services/bankService'; // Import BankService
+import { bankService, ContaBancaria } from '../services/bankService';
+import { filialService, Filial } from '../services/filialService';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
@@ -24,13 +25,28 @@ interface UnifiedTransaction {
   costCenterId?: string; // ID do Centro de Custo
   costCenterGroup?: string; // Grupo DRE (Ex: Receita Operacional)
   costCenterName?: string; // Nome do Centro
+  documentNumber?: string;
+  observacao?: string;
+  valorOriginal: number; // Valor sempre positivo (raw do BD)
+  filialId?: string;
+  filialName?: string;
 }
 
 
 const Financial: React.FC = () => {
   const [transactions, setTransactions] = useState<UnifiedTransaction[]>([]);
-  const [bankAccounts, setBankAccounts] = useState<ContaBancaria[]>([]); // Bank Accounts State
+  const [bankAccounts, setBankAccounts] = useState<ContaBancaria[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Filiais
+  const [filiais, setFiliais] = useState<Filial[]>([]);
+  const [selectedFilialId, setSelectedFilialId] = useState<string>('ALL');
+
+  // Edição
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Multi-seleção
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,7 +67,8 @@ const Financial: React.FC = () => {
     dueDate: new Date().toISOString().split('T')[0],
     type: 'INCOME' as 'INCOME' | 'EXPENSE',
     costCenter: '',
-    documentNumber: '' // New Field
+    documentNumber: '',
+    observacao: ''
   });
 
   // Novo Banco State
@@ -115,11 +132,45 @@ const Financial: React.FC = () => {
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterType, setFilterType] = useState('ALL');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterDatePreset, setFilterDatePreset] = useState('ALL');
+
+  // Atalhos rápidos de data
+  const applyDatePreset = (preset: string) => {
+    setFilterDatePreset(preset);
+    const today = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    if (preset === 'TODAY') {
+      setFilterDateFrom(fmt(today));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'WEEK') {
+      const weekAgo = new Date(today);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      setFilterDateFrom(fmt(weekAgo));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'MONTH') {
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFilterDateFrom(fmt(monthStart));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'LAST_MONTH') {
+      const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+      setFilterDateFrom(fmt(lastMonthStart));
+      setFilterDateTo(fmt(lastMonthEnd));
+    } else {
+      setFilterDateFrom('');
+      setFilterDateTo('');
+    }
+  };
 
   const filteredTransactions = transactions.filter(t => {
     if (filterText && !t.description.toLowerCase().includes(filterText.toLowerCase()) && !t.entityName.toLowerCase().includes(filterText.toLowerCase())) return false;
     if (filterStatus !== 'ALL' && t.status !== filterStatus) return false;
     if (filterType !== 'ALL' && t.type !== filterType) return false;
+    if (filterDateFrom && t.dueDate < filterDateFrom) return false;
+    if (filterDateTo && t.dueDate > filterDateTo) return false;
     return true;
   });
 
@@ -149,30 +200,35 @@ const Financial: React.FC = () => {
     };
 
     filtered.forEach(t => {
+      const grupo = t.costCenterGroup || '';
       if (t.type === 'INCOME') {
-        if (t.costCenterGroup?.includes('Receita')) {
+        // Receita: se tem grupo de Receita OU se não tem centro de custo (default = receita)
+        if (grupo.includes('Receita') || grupo === 'Outros' || !grupo) {
           receitaBruta += t.amount;
-          // Agrupar por sub-centro
-          const existing = details.receitas.find(d => d.nome === t.costCenterName);
+          const nome = t.costCenterName || 'Receitas Gerais';
+          const existing = details.receitas.find(d => d.nome === nome);
           if (existing) existing.valor += t.amount;
-          else details.receitas.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Financeiro')) {
+          else details.receitas.push({ nome, valor: t.amount });
+        } else if (grupo.includes('Financeiro')) {
           resultadoFinanceiro += t.amount;
         }
       } else {
-        // Expense
-        if (t.costCenterGroup?.includes('Custos Diretos') || t.costCenterGroup?.includes('CPV')) {
-          custosDiretos += t.amount; // Valor negativo
-          const existing = details.custos.find(d => d.nome === t.costCenterName);
+        // Despesa: classificar pelo grupo DRE do centro de custo
+        if (grupo.includes('Custos Diretos') || grupo.includes('CPV')) {
+          custosDiretos += t.amount;
+          const nome = t.costCenterName || 'Custos Diversos';
+          const existing = details.custos.find(d => d.nome === nome);
           if (existing) existing.valor += t.amount;
-          else details.custos.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Despesas')) {
-          despesasFixas += t.amount;
-          const existing = details.despesas.find(d => d.nome === t.costCenterName);
-          if (existing) existing.valor += t.amount;
-          else details.despesas.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Financeiro')) {
+          else details.custos.push({ nome, valor: t.amount });
+        } else if (grupo.includes('Financeiro')) {
           resultadoFinanceiro += t.amount;
+        } else {
+          // Despesas operacionais (inclui 'Despesas', 'Outros' e sem centro de custo)
+          despesasFixas += t.amount;
+          const nome = t.costCenterName || 'Despesas Gerais';
+          const existing = details.despesas.find(d => d.nome === nome);
+          if (existing) existing.valor += t.amount;
+          else details.despesas.push({ nome, valor: t.amount });
         }
       }
     });
@@ -201,6 +257,7 @@ const Financial: React.FC = () => {
 
   // Estados de Baixa (Settlement)
   const [settleDate, setSettleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [settlePaymentMethod, setSettlePaymentMethod] = useState('PIX');
   const [selectedBankId, setSelectedBankId] = useState<string>(''); // Selected Bank for Settlement
   const [applyInterest, setApplyInterest] = useState(true);
   const [settlementValues, setSettlementValues] = useState({
@@ -304,15 +361,41 @@ const Financial: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    loadFiliais();
     loadEntities();
-    loadBankAccounts();
     loadCostCenters();
   }, []);
 
+  // Recarregar dados financeiros quando filial muda
+  useEffect(() => {
+    loadData();
+    loadBankAccounts();
+    setSelectedIds(new Set());
+  }, [selectedFilialId]);
+
+  const loadFiliais = async () => {
+    try {
+      const data = await filialService.listar();
+      setFiliais(data);
+    } catch { /* silencioso se companies não tiver os campos ainda */ }
+  };
+
   const loadEntities = async () => {
-    const { data } = await supabase.from('entities').select('id, name').order('name');
-    if (data) setEntities(data);
+    const allEntities: { id: string, name: string }[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data } = await supabase
+        .from('entities')
+        .select('id, name')
+        .order('name')
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+      if (!data || data.length === 0) break;
+      allEntities.push(...data);
+      if (data.length < pageSize) break;
+      page++;
+    }
+    setEntities(allEntities);
   };
 
   const loadCostCenters = async () => {
@@ -339,7 +422,8 @@ const Financial: React.FC = () => {
   // ... loadBankAccounts ...
   const loadBankAccounts = async () => {
     try {
-      const accounts = await bankService.listar();
+      const filialFilter = selectedFilialId !== 'ALL' ? selectedFilialId : undefined;
+      const accounts = await bankService.listar(filialFilter);
       setBankAccounts(accounts || []);
       // Calculate total available based on accounts
       const total = accounts?.reduce((acc, curr) => acc + (curr.saldo_atual || 0), 0) || 0;
@@ -355,30 +439,17 @@ const Financial: React.FC = () => {
     }
   };
 
-  // ... loadData ...
-
-  // To avoid duplication, I will invoke replace_file_content separately for the handleAddTransaction function later 
-  // or I can try to include handleAddTransaction here if it fits within the context/range, 
-  // but since handleAddTransaction is further down, I will target the state and useEffect first.
-
-  // Wait, I need to update handleAddTransaction too.
-  // Let's first update the STATE and LOADING logic.
-
-  // Actually, I can replace the whole block from "Estados de Formulário" down to the end of "handleAddTransaction" 
-  // but that's a huge block.
-
-  // Let's split. First: State and Loaders.
-
-
   const loadData = async () => {
     try {
       setLoading(true);
 
+      const filialFilter = selectedFilialId !== 'ALL' ? selectedFilialId : undefined;
+
       // 1. Buscar Contas a Receber
-      const receivables = await receivableService.listar() || [];
+      const receivables = await receivableService.listar({ filial_id: filialFilter }) || [];
 
       // 2. Buscar Contas a Pagar
-      const payables = await paymentService.listar() || [];
+      const payables = await paymentService.listar({ filial_id: filialFilter }) || [];
 
       // 3. Unificar dados
       const unified: UnifiedTransaction[] = [];
@@ -400,12 +471,17 @@ const Financial: React.FC = () => {
           entityName: r.cliente?.name || 'Cliente Desconhecido',
           entityId: r.cliente_id,
           amount: r.valor_saldo || r.valor_original,
+          valorOriginal: r.valor_original,
           dueDate: r.data_vencimento,
           status,
           originalStatus: r.status,
           costCenterId: r.centro_custo_id,
           costCenterGroup: cc?.grupo_dre || 'Outros',
-          costCenterName: cc?.nome
+          costCenterName: cc?.nome,
+          documentNumber: r.numero_documento,
+          observacao: r.observacao,
+          filialId: r.filial_id,
+          filialName: r.filial?.short_name
         });
       });
 
@@ -426,12 +502,17 @@ const Financial: React.FC = () => {
           entityName: p.fornecedor?.name || 'Fornecedor Desconhecido',
           entityId: p.fornecedor_id,
           amount: -(p.valor_saldo || p.valor_original),
+          valorOriginal: p.valor_original,
           dueDate: p.data_vencimento,
           status,
           originalStatus: p.status,
           costCenterId: p.centro_custo_id,
           costCenterGroup: cc?.grupo_dre || 'Outros',
-          costCenterName: cc?.nome
+          costCenterName: cc?.nome,
+          documentNumber: p.numero_documento,
+          observacao: p.observacao,
+          filialId: p.filial_id,
+          filialName: p.filial?.short_name
         });
       });
 
@@ -458,59 +539,116 @@ const Financial: React.FC = () => {
     }
   };
 
+  const resetForm = () => {
+    setEditingId(null);
+    setNewTransaction({
+      description: '',
+      entityId: '',
+      amount: 0,
+      dueDate: new Date().toISOString().split('T')[0],
+      type: 'INCOME',
+      costCenter: '',
+      documentNumber: '',
+      observacao: ''
+    });
+  };
+
+  const openEditModal = (e: React.MouseEvent, tr: UnifiedTransaction) => {
+    e.stopPropagation();
+    // Garantir que a entidade esteja na lista (pode não ter carregado ainda na paginação)
+    if (tr.entityId && !entities.find(ent => ent.id === tr.entityId)) {
+      setEntities(prev => [...prev, { id: tr.entityId, name: tr.entityName }].sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    setEditingId(tr.originalId);
+    setNewTransaction({
+      description: tr.description,
+      entityId: tr.entityId,
+      amount: tr.valorOriginal,
+      dueDate: tr.dueDate,
+      type: tr.type,
+      costCenter: tr.costCenterId || '',
+      documentNumber: tr.documentNumber || '',
+      observacao: tr.observacao || ''
+    });
+    setIsModalOpen(true);
+  };
+
   const handleAddTransaction = async () => {
     if (!newTransaction.description || !newTransaction.amount || !newTransaction.entityId) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
 
+    const entityName = entities.find(e => e.id === newTransaction.entityId)?.name || '';
+    const filialId = selectedFilialId !== 'ALL' ? selectedFilialId : (filiais[0]?.id || undefined);
+
     try {
-      if (newTransaction.type === 'INCOME') {
-        await receivableService.criar({
-          descricao: newTransaction.description,
-          cliente_id: newTransaction.entityId,
-          cliente_nome: entities.find(e => e.id === newTransaction.entityId)?.name || '',
-          valor_original: Number(newTransaction.amount),
-          data_emissao: new Date().toISOString().split('T')[0],
-          data_vencimento: newTransaction.dueDate,
-          status: 'PENDENTE',
-          numero_titulo: '', // Auto
-          numero_documento: newTransaction.documentNumber,
-          centro_custo_id: newTransaction.costCenter
-        } as ContaReceber);
+      if (editingId) {
+        // UPDATE
+        if (newTransaction.type === 'INCOME') {
+          await receivableService.atualizar(editingId, {
+            descricao: newTransaction.description,
+            cliente_id: newTransaction.entityId,
+            cliente_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_vencimento: newTransaction.dueDate,
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter || undefined,
+            observacao: newTransaction.observacao || undefined
+          });
+        } else {
+          await paymentService.atualizar(editingId, {
+            descricao: newTransaction.description,
+            fornecedor_id: newTransaction.entityId,
+            fornecedor_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_vencimento: newTransaction.dueDate,
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter || undefined,
+            observacao: newTransaction.observacao || undefined
+          });
+        }
+        toast.success("Lançamento atualizado com sucesso!");
       } else {
-        await paymentService.criar({
-          descricao: newTransaction.description,
-          fornecedor_id: newTransaction.entityId,
-          fornecedor_nome: entities.find(e => e.id === newTransaction.entityId)?.name || '',
-          valor_original: Number(newTransaction.amount),
-          data_emissao: new Date().toISOString().split('T')[0],
-          data_vencimento: newTransaction.dueDate,
-          status: 'PENDENTE',
-          numero_titulo: '', // Auto
-          numero_documento: newTransaction.documentNumber,
-          centro_custo_id: newTransaction.costCenter
-        } as ContaPagar);
+        // CREATE
+        if (newTransaction.type === 'INCOME') {
+          await receivableService.criar({
+            descricao: newTransaction.description,
+            cliente_id: newTransaction.entityId,
+            cliente_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_emissao: new Date().toISOString().split('T')[0],
+            data_vencimento: newTransaction.dueDate,
+            status: 'PENDENTE',
+            numero_titulo: '',
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter,
+            filial_id: filialId
+          } as ContaReceber);
+        } else {
+          await paymentService.criar({
+            descricao: newTransaction.description,
+            fornecedor_id: newTransaction.entityId,
+            fornecedor_nome: entityName,
+            valor_original: Number(newTransaction.amount),
+            data_emissao: new Date().toISOString().split('T')[0],
+            data_vencimento: newTransaction.dueDate,
+            status: 'PENDENTE',
+            numero_titulo: '',
+            numero_documento: newTransaction.documentNumber,
+            centro_custo_id: newTransaction.costCenter,
+            filial_id: filialId
+          } as ContaPagar);
+        }
+        toast.success("Transação criada com sucesso!");
       }
 
-      toast.success("Transação criada com sucesso!");
       setIsModalOpen(false);
+      resetForm();
       loadData();
-
-      // Reset form
-      setNewTransaction({
-        description: '',
-        entityId: '',
-        amount: 0,
-        dueDate: new Date().toISOString().split('T')[0],
-        type: 'INCOME',
-        costCenter: '',
-        documentNumber: ''
-      });
-
     } catch (error) {
       console.error(error);
-      toast.error("Erro ao salvar transação");
+      toast.error(editingId ? "Erro ao atualizar lançamento" : "Erro ao salvar transação");
     }
   };
 
@@ -642,7 +780,7 @@ const Financial: React.FC = () => {
         await receivableService.receber(selectedTransaction.originalId, {
           valor_recebido: settlementValues.total,
           data_recebimento: settleDate,
-          forma_recebimento: 'PIX', // TODO: Dropdown no modal
+          forma_recebimento: settlePaymentMethod,
           banco_id: selectedBankId,
           valor_desconto: settlementValues.discount,
           observacao: applyInterest ? `Com Juros/Multa` : ''
@@ -651,7 +789,7 @@ const Financial: React.FC = () => {
         await paymentService.pagar(selectedTransaction.originalId, {
           valor_pago: settlementValues.total,
           data_pagamento: settleDate,
-          forma_pagamento: 'PIX', // TODO: Dropdown
+          forma_pagamento: settlePaymentMethod,
           banco_id: selectedBankId,
           observacao: 'Pagamento via ERP'
         });
@@ -689,6 +827,150 @@ const Financial: React.FC = () => {
     });
   };
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredTransactions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredTransactions.map(t => t.id)));
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Deseja realmente excluir ${selectedIds.size} lançamento(s)?`)) return;
+
+    handleSecurityCheck(async () => {
+      const selected = transactions.filter(t => selectedIds.has(t.id));
+      const crIds = selected.filter(t => t.type === 'INCOME').map(t => t.originalId);
+      const cpIds = selected.filter(t => t.type === 'EXPENSE').map(t => t.originalId);
+      let errors = 0;
+
+      if (crIds.length > 0) {
+        const { error } = await supabase.from('contas_receber').delete().in('id', crIds);
+        if (error) errors++;
+      }
+      if (cpIds.length > 0) {
+        const { error } = await supabase.from('contas_pagar').delete().in('id', cpIds);
+        if (error) errors++;
+      }
+
+      if (errors === 0) {
+        toast.success(`${selectedIds.size} lançamento(s) excluído(s)`);
+      } else {
+        toast.error("Alguns lançamentos não puderam ser excluídos");
+      }
+      setSelectedIds(new Set());
+      loadData();
+    });
+  };
+
+  // Baixa em massa: baixar todos os pendentes selecionados
+  const handleBulkSettle = () => {
+    const selected = transactions.filter(t => selectedIds.has(t.id));
+    const pendentes = selected.filter(t => t.status !== 'PAID' && t.status !== 'CANCELADO');
+    if (pendentes.length === 0) { toast.error("Nenhum lançamento pendente selecionado"); return; }
+
+    const totalValor = pendentes.reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+    const msg = `Baixar ${pendentes.length} lançamento(s) no valor total de R$ ${totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}?`;
+    if (!confirm(msg)) return;
+
+    handleSecurityCheck(async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      let ok = 0, erros = 0;
+
+      for (const t of pendentes) {
+        try {
+          if (t.type === 'INCOME') {
+            await receivableService.receber(t.originalId, {
+              valor_recebido: t.valorOriginal || Math.abs(t.amount),
+              data_recebimento: today,
+              forma_recebimento: 'TRANSFERENCIA',
+              observacao: 'Baixa em massa via ERP'
+            });
+          } else {
+            await paymentService.pagar(t.originalId, {
+              valor_pago: t.valorOriginal || Math.abs(t.amount),
+              data_pagamento: today,
+              forma_pagamento: 'TRANSFERENCIA',
+              observacao: 'Baixa em massa via ERP'
+            });
+          }
+          ok++;
+        } catch (err) {
+          console.error(`Erro ao baixar ${t.id}:`, err);
+          erros++;
+        }
+      }
+
+      if (erros === 0) {
+        toast.success(`${ok} lançamento(s) baixado(s) com sucesso!`);
+      } else {
+        toast.error(`${ok} baixado(s), ${erros} erro(s)`);
+      }
+      setSelectedIds(new Set());
+      loadData();
+      loadBankAccounts();
+    });
+  };
+
+  // Estorno: reverter baixa de um lançamento pago
+  const handleEstorno = (e: React.MouseEvent, tr: UnifiedTransaction) => {
+    e.stopPropagation();
+    if (tr.status !== 'PAID') { toast.error("Apenas lançamentos pagos/recebidos podem ser estornados"); return; }
+
+    handleSecurityCheck(async () => {
+      try {
+        if (tr.type === 'INCOME') {
+          // Reverter recebimento
+          const { error } = await supabase.from('contas_receber').update({
+            status: 'PENDENTE',
+            valor_recebido: null,
+            data_recebimento: null,
+            forma_recebimento: null,
+            banco_id: null,
+          }).eq('id', tr.originalId);
+          if (error) throw error;
+
+          // Remover movimento bancário associado
+          await supabase.from('movimentos_bancarios').delete()
+            .eq('lancamento_financeiro_id', tr.originalId)
+            .eq('lancamento_tipo', 'RECEBER');
+        } else {
+          // Reverter pagamento
+          const { error } = await supabase.from('contas_pagar').update({
+            status: 'PENDENTE',
+            valor_pago: null,
+            data_pagamento: null,
+            forma_pagamento: null,
+            banco_id: null,
+          }).eq('id', tr.originalId);
+          if (error) throw error;
+
+          // Remover movimento bancário
+          await supabase.from('movimentos_bancarios').delete()
+            .eq('lancamento_financeiro_id', tr.originalId)
+            .eq('lancamento_tipo', 'PAGAR');
+        }
+
+        toast.success("Estorno realizado! Lançamento voltou para Pendente.");
+        loadData();
+        loadBankAccounts();
+      } catch (error) {
+        console.error(error);
+        toast.error("Erro ao estornar lançamento");
+      }
+    });
+  };
+
   if (loading && transactions.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -722,11 +1004,14 @@ const Financial: React.FC = () => {
           >
             <Calendar size={16} /> DRE Gerencial
           </button>
-          <button className="bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 transition">
+          <button
+            onClick={() => toast('Conciliação bancária em desenvolvimento', { icon: '🏗️' })}
+            className="bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 transition"
+          >
             Conciliação
           </button>
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => { resetForm(); setIsModalOpen(true); }}
             className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition"
           >
             <Plus size={18} /> Novo Lançamento
@@ -735,6 +1020,39 @@ const Financial: React.FC = () => {
       </div>
 
 
+
+      {/* SELETOR DE FILIAL */}
+      {filiais.length > 0 && (
+        <div className="flex items-center gap-3 bg-slate-900/50 border border-slate-800 rounded-2xl p-3 mb-4">
+          <Building2 className="text-blue-400 shrink-0" size={20} />
+          <span className="text-xs font-black text-slate-500 uppercase tracking-widest shrink-0">Filial:</span>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => setSelectedFilialId('ALL')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                selectedFilialId === 'ALL'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-600'
+              }`}
+            >
+              Todas
+            </button>
+            {filiais.map(f => (
+              <button
+                key={f.id}
+                onClick={() => setSelectedFilialId(f.id)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  selectedFilialId === f.id
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                    : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                {f.short_name || f.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* BANK ACCOUNTS CAROUSEL */}
       <div className="flex justify-between items-center mb-2">
@@ -763,7 +1081,7 @@ const Financial: React.FC = () => {
               <h4 className="font-bold text-slate-300 text-sm truncate">{acc.banco_nome}</h4>
               <p className="text-xs text-slate-500 mb-2 truncate">Ag: {acc.agencia} • CC: {acc.conta}</p>
               <div className="text-xl font-black text-white tracking-tight">
-                R$ {acc.saldo_atual?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                R$ {acc.saldo_atual?.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
 
               {/* Delete Button (Hover) */}
@@ -783,7 +1101,7 @@ const Financial: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard
           title="Disponibilidade Total (Caixa + Bancos)"
-          value={`R$ ${stats.totalAvailable.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.totalAvailable.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="Atualizado agora"
           trendUp={true}
           icon={<Wallet size={24} />}
@@ -791,7 +1109,7 @@ const Financial: React.FC = () => {
         />
         <StatCard
           title="Previsão de Recebimento"
-          value={`R$ ${stats.income30d.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.income30d.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="A receber"
           trendUp={true}
           icon={<ArrowUpRight size={24} />}
@@ -799,7 +1117,7 @@ const Financial: React.FC = () => {
         />
         <StatCard
           title="Previsão de Pagamento"
-          value={`R$ ${stats.expense30d.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.expense30d.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="A pagar"
           trendUp={false}
           icon={<ArrowDownLeft size={24} />}
@@ -822,47 +1140,154 @@ const Financial: React.FC = () => {
 
           {/* Painel de Filtros */}
           {showFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-900 rounded-xl border border-slate-800 animate-in slide-in-from-top-2">
-              <input
-                placeholder="Buscar por descrição, cliente..."
-                value={filterText}
-                onChange={e => setFilterText(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              />
-              <select
-                value={filterType}
-                onChange={e => setFilterType(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Todas as Movimentações</option>
-                <option value="INCOME">Apenas Receitas</option>
-                <option value="EXPENSE">Apenas Despesas</option>
-              </select>
-              <select
-                value={filterStatus}
-                onChange={e => setFilterStatus(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Todos os Status</option>
-                <option value="PENDING">Pendente</option>
-                <option value="PAID">Pago / Recebido</option>
-                <option value="OVERDUE">Vencido</option>
-                <option value="CANCELADO">Cancelado</option>
-              </select>
-              <button
-                onClick={() => { setFilterText(''); setFilterType('ALL'); setFilterStatus('ALL'); }}
-                className="text-xs text-slate-500 hover:text-white underline"
-              >
-                Limpar Filtros
-              </button>
+            <div className="flex flex-col gap-3 p-4 bg-slate-900 rounded-xl border border-slate-800 animate-in slide-in-from-top-2">
+              {/* Atalhos rápidos de data */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <CalendarDays size={14} className="text-slate-500" />
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Período:</span>
+                {[
+                  { key: 'ALL', label: 'Todos' },
+                  { key: 'TODAY', label: 'Hoje' },
+                  { key: 'WEEK', label: '7 dias' },
+                  { key: 'MONTH', label: 'Mês atual' },
+                  { key: 'LAST_MONTH', label: 'Mês anterior' },
+                ].map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => applyDatePreset(p.key)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterDatePreset === p.key
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <div className="flex items-center gap-1 ml-2">
+                  <input
+                    type="date"
+                    value={filterDateFrom}
+                    onChange={e => { setFilterDateFrom(e.target.value); setFilterDatePreset('CUSTOM'); }}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-white text-xs outline-none focus:border-blue-500"
+                  />
+                  <span className="text-slate-600 text-xs">até</span>
+                  <input
+                    type="date"
+                    value={filterDateTo}
+                    onChange={e => { setFilterDateTo(e.target.value); setFilterDatePreset('CUSTOM'); }}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-white text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              {/* Filtros de texto, tipo e status */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input
+                  placeholder="Buscar por descrição, cliente..."
+                  value={filterText}
+                  onChange={e => setFilterText(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                />
+                <select
+                  value={filterType}
+                  onChange={e => setFilterType(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">Todas as Movimentações</option>
+                  <option value="INCOME">Apenas Receitas</option>
+                  <option value="EXPENSE">Apenas Despesas</option>
+                </select>
+                <select
+                  value={filterStatus}
+                  onChange={e => setFilterStatus(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">Todos os Status</option>
+                  <option value="PENDING">Pendente</option>
+                  <option value="PAID">Pago / Recebido</option>
+                  <option value="OVERDUE">Vencido</option>
+                  <option value="CANCELADO">Cancelado</option>
+                </select>
+                <button
+                  onClick={() => { setFilterText(''); setFilterType('ALL'); setFilterStatus('ALL'); applyDatePreset('ALL'); }}
+                  className="text-xs text-slate-500 hover:text-white underline"
+                >
+                  Limpar Filtros
+                </button>
+              </div>
             </div>
           )}
         </div>
+
+        {selectedIds.size > 0 && (() => {
+          const selected = transactions.filter(t => selectedIds.has(t.id));
+          const totalReceitas = selected.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+          const totalDespesas = selected.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.valorOriginal || Math.abs(t.amount)), 0);
+          const pendentes = selected.filter(t => t.status !== 'PAID' && t.status !== 'CANCELADO');
+          return (
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 mb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-sm text-blue-400 font-bold">
+                  {selectedIds.size} selecionado{selectedIds.size > 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-3 text-xs">
+                  {totalReceitas > 0 && (
+                    <span className="text-emerald-400 font-mono font-bold">
+                      ↑ R$ {totalReceitas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                  {totalDespesas > 0 && (
+                    <span className="text-rose-400 font-mono font-bold">
+                      ↓ R$ {totalDespesas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                  <span className="text-white font-mono font-black">
+                    = R$ {(totalReceitas - totalDespesas).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+                >
+                  Limpar
+                </button>
+                {pendentes.length > 0 && (
+                  <button
+                    onClick={handleBulkSettle}
+                    className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition-colors"
+                  >
+                    <CheckCircle size={14} />
+                    Baixar {pendentes.length} Pendente{pendentes.length > 1 ? 's' : ''}
+                  </button>
+                )}
+                <button
+                  onClick={handleBulkDelete}
+                  className="flex items-center gap-1.5 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+                >
+                  <Trash2 size={14} />
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-slate-950 text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                <th className="px-3 py-4 w-10">
+                  <input
+                    type="checkbox"
+                    checked={filteredTransactions.length > 0 && selectedIds.size === filteredTransactions.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-blue-500 cursor-pointer"
+                  />
+                </th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Descrição / Entidade</th>
                 <th className="px-6 py-4">Vencimento</th>
@@ -873,15 +1298,23 @@ const Financial: React.FC = () => {
             <tbody className="divide-y divide-slate-800">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">Nenhuma transação encontrada.</td>
+                  <td colSpan={6} className="p-8 text-center text-slate-500">Nenhuma transação encontrada.</td>
                 </tr>
               ) : (
                 filteredTransactions.map((tr) => (
                   <tr
                     key={tr.id}
                     onClick={() => handleTransactionClick(tr)}
-                    className="hover:bg-slate-800/50 transition-colors cursor-pointer group"
+                    className={`hover:bg-slate-800/50 transition-colors cursor-pointer group ${selectedIds.has(tr.id) ? 'bg-blue-500/5' : ''}`}
                   >
+                    <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(tr.id)}
+                        onChange={() => toggleSelect(tr.id)}
+                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-blue-500 cursor-pointer"
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider border ${tr.status === 'PAID' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                         tr.status === 'OVERDUE' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
@@ -910,16 +1343,36 @@ const Financial: React.FC = () => {
                       {tr.status === 'OVERDUE' && <span className="ml-2 text-[9px] bg-rose-500/20 px-1 rounded">VENCIDO</span>}
                     </td>
                     <td className={`px-6 py-4 text-right font-black text-sm ${tr.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {tr.amount >= 0 ? '+' : '-'} R$ {Math.abs(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      {tr.amount >= 0 ? '+' : '-'} R$ {Math.abs(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={(e) => handleDelete(e, tr)}
-                        className="p-2 rounded-lg text-slate-600 hover:text-red-500 hover:bg-slate-800 transition-colors"
-                        title="Excluir Lançamento"
-                      >
-                        <Archive size={16} />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {tr.status !== 'PAID' && tr.status !== 'CANCELADO' && (
+                          <button
+                            onClick={(e) => openEditModal(e, tr)}
+                            className="p-2 rounded-lg text-slate-600 hover:text-blue-400 hover:bg-slate-800 transition-colors"
+                            title="Editar Lançamento"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        )}
+                        {(tr.status === 'PAID') && (
+                          <button
+                            onClick={(e) => handleEstorno(e, tr)}
+                            className="p-2 rounded-lg text-slate-600 hover:text-amber-400 hover:bg-slate-800 transition-colors"
+                            title="Estornar Baixa"
+                          >
+                            <Undo2 size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => handleDelete(e, tr)}
+                          className="p-2 rounded-lg text-slate-600 hover:text-red-500 hover:bg-slate-800 transition-colors"
+                          title="Excluir Lançamento"
+                        >
+                          <Archive size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1010,18 +1463,20 @@ const Financial: React.FC = () => {
       </Modal>
 
       {/* MODAL: NOVO LANÇAMENTO */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Novo Lançamento Financeiro">
+      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); resetForm(); }} title={editingId ? "Editar Lançamento Financeiro" : "Novo Lançamento Financeiro"}>
         <div className="space-y-4">
-          <div className="flex gap-4 p-1 bg-slate-900 rounded-xl border border-slate-800">
+          <div className={`flex gap-4 p-1 bg-slate-900 rounded-xl border border-slate-800 ${editingId ? 'opacity-60' : ''}`}>
             <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'INCOME' }))}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+              onClick={() => !editingId && setNewTransaction(prev => ({ ...prev, type: 'INCOME' }))}
+              disabled={!!editingId}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'} ${editingId ? 'cursor-not-allowed' : ''}`}
             >
               Receita (Entrada)
             </button>
             <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'EXPENSE' }))}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'EXPENSE' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+              onClick={() => !editingId && setNewTransaction(prev => ({ ...prev, type: 'EXPENSE' }))}
+              disabled={!!editingId}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${newTransaction.type === 'EXPENSE' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'} ${editingId ? 'cursor-not-allowed' : ''}`}
             >
               Despesa (Saída)
             </button>
@@ -1138,12 +1593,23 @@ const Financial: React.FC = () => {
             </div>
           </div>
 
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Observação</label>
+            <textarea
+              value={newTransaction.observacao}
+              onChange={e => setNewTransaction(prev => ({ ...prev, observacao: e.target.value }))}
+              placeholder="Observações adicionais..."
+              rows={3}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500 resize-none"
+            />
+          </div>
+
           <div className="pt-4">
             <button
               onClick={handleAddTransaction}
               className={`w-full py-4 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 ${newTransaction.type === 'INCOME' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'}`}
             >
-              <Save size={20} /> Salvar Lançamento
+              <Save size={20} /> {editingId ? 'Salvar Alterações' : 'Salvar Lançamento'}
             </button>
           </div>
         </div>
@@ -1217,12 +1683,30 @@ const Financial: React.FC = () => {
               </select>
             </div>
 
+            {/* Forma de Pagamento */}
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Forma de Pagamento</label>
+              <select
+                value={settlePaymentMethod}
+                onChange={e => setSettlePaymentMethod(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
+              >
+                <option value="PIX">PIX / Transferência</option>
+                <option value="Boleto">Boleto</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Cartao Debito">Cartão Débito</option>
+                <option value="Cartao Credito">Cartão Crédito</option>
+                <option value="Deposito">Depósito</option>
+              </select>
+            </div>
+
             {/* Total Final */}
             <div className="pt-2 border-t border-slate-800 flex justify-between items-end">
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Total a {selectedTransaction.type === 'INCOME' ? 'Receber' : 'Pagar'}</label>
                 <div className={`text-3xl font-black tracking-tighter ${selectedTransaction.type === 'INCOME' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  R$ {settlementValues.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {settlementValues.total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
 
@@ -1406,7 +1890,7 @@ const Financial: React.FC = () => {
       </Modal>
 
       {/* MODAL: RELATÓRIO DRE */}
-      <Modal isOpen={isDREModalOpen} onClose={() => setIsDREModalOpen(false)} title="Demonstrativo de Resultado (DRE Gerencial)">
+      <Modal isOpen={isDREModalOpen} onClose={() => setIsDREModalOpen(false)} title={`DRE Gerencial — ${selectedFilialId === 'ALL' ? 'Consolidado' : filiais.find(f => f.id === selectedFilialId)?.short_name || 'Todas'}`}>
         <div className="space-y-6">
           {/* Filtros */}
           <div className="flex justify-between items-center bg-slate-900 p-4 rounded-xl border border-slate-800">
@@ -1433,7 +1917,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 sticky top-0 z-10">
                   <td className="p-4 font-black text-emerald-400">1. RECEITA OPERACIONAL BRUTA</td>
                   <td className="p-4 text-right font-black text-emerald-400">
-                    R$ {dreData.receitaBruta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {dreData.receitaBruta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
                 {dreData.details.receitas.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1441,7 +1925,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-emerald-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono">
-                      {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -1450,7 +1934,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-950/50">
                   <td className="p-3 font-bold text-rose-400 pl-6 text-xs">(-) Impostos / Deduções (Simulado 6%)</td>
                   <td className="p-3 text-right font-bold text-rose-400 text-xs">
-                    (R$ {(dreData.receitaBruta * 0.06).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {(dreData.receitaBruta * 0.06).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
 
@@ -1458,7 +1942,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t border-slate-700">
                   <td className="p-3 font-black text-white text-xs uppercase tracking-wider">= RECEITA LÍQUIDA</td>
                   <td className="p-3 text-right font-black text-white">
-                    R$ {(dreData.receitaBruta * 0.94).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -1466,7 +1950,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 mt-4 border-t-2 border-slate-800 sticky top-10">
                   <td className="p-4 font-black text-amber-500">2. CUSTOS DIRETOS (CPV)</td>
                   <td className="p-4 text-right font-black text-amber-500">
-                    (R$ {Math.abs(dreData.custosDiretos).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {Math.abs(dreData.custosDiretos).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
                 {dreData.details.custos.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1474,7 +1958,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-amber-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono text-rose-400">
-                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                     </td>
                   </tr>
                 ))}
@@ -1483,7 +1967,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t border-slate-700">
                   <td className="p-3 font-black text-white text-xs uppercase tracking-wider">= LUCRO BRUTO</td>
                   <td className="p-3 text-right font-black text-white">
-                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -1491,7 +1975,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 mt-4 border-t-2 border-slate-800">
                   <td className="p-4 font-black text-rose-500">3. DESPESAS OPERACIONAIS</td>
                   <td className="p-4 text-right font-black text-rose-500">
-                    (R$ {Math.abs(dreData.despesasFixas).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {Math.abs(dreData.despesasFixas).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
                 {dreData.details.despesas.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1499,7 +1983,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-rose-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono text-rose-400">
-                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                     </td>
                   </tr>
                 ))}
@@ -1508,7 +1992,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t-2 border-slate-600">
                   <td className="p-4 font-black text-white text-lg">= EBITDA</td>
                   <td className={`p-4 text-right font-black text-lg ${(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
               </tbody>

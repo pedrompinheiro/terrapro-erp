@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, AlertCircle, CheckCircle2, Clock, MapPin, DollarSign, MessageSquare, Plus, BarChart3 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import { dashboardService } from '../services/api';
+import { bankService } from '../services/bankService';
 import { useNavigate } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
@@ -10,6 +11,7 @@ const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saldoFinanceiro, setSaldoFinanceiro] = useState<number | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -20,6 +22,13 @@ const Dashboard: React.FC = () => {
         ]);
         setStats(statsData as any[]);
         setActivities(activitiesData as any[]);
+
+        // Buscar saldo real das contas bancárias
+        try {
+          const accounts = await bankService.listar();
+          const total = accounts?.reduce((acc: number, curr: any) => acc + (curr.saldo_atual || 0), 0) || 0;
+          setSaldoFinanceiro(total);
+        } catch { /* fallback silencioso */ }
       } catch (error) {
         console.error("Failed to load dashboard data", error);
       } finally {
@@ -63,9 +72,9 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Saldo Financeiro"
-          value="R$ 1.25M"
-          trend="+12% (Mês)"
-          trendUp={true}
+          value={saldoFinanceiro !== null ? `R$ ${saldoFinanceiro.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Carregando...'}
+          trend="Caixa + Bancos"
+          trendUp={saldoFinanceiro !== null && saldoFinanceiro >= 0}
           icon={<DollarSign size={24} />}
           iconBg="bg-blue-600"
           onClick={() => navigate('/financial')}

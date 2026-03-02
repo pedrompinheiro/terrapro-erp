@@ -41,6 +41,7 @@ export interface ContaReceber {
     contrato_id?: string;
     nota_fiscal_id?: string;
     conciliado?: boolean;
+    filial_id?: string;
 }
 
 class ReceivableService {
@@ -53,6 +54,7 @@ class ReceivableService {
         vencidas?: boolean;
         inadimplentes?: boolean;
         recorrentes?: boolean;
+        filial_id?: string;
     }) {
         let query = supabase
             .from('contas_receber')
@@ -63,6 +65,10 @@ class ReceivableService {
         centro_custo:centros_custo(codigo, nome)
       `)
             .order('data_vencimento', { ascending: false });
+
+        if (filtros?.filial_id) {
+            query = query.eq('filial_id', filtros.filial_id);
+        }
 
         if (filtros?.cliente_id) {
             query = query.eq('cliente_id', filtros.cliente_id);
@@ -106,6 +112,21 @@ class ReceivableService {
         const { data, error } = await supabase
             .from('contas_receber')
             .insert(conta)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
+     * Atualizar conta a receber existente
+     */
+    async atualizar(id: string, dados: Partial<ContaReceber>) {
+        const { data, error } = await supabase
+            .from('contas_receber')
+            .update(dados)
+            .eq('id', id)
             .select()
             .single();
 
