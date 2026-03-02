@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2 } from 'lucide-react';
+import { DollarSign, ArrowUpRight, ArrowDownLeft, Filter, Plus, Save, Calculator, CheckCircle, Archive, AlertCircle, Calendar, CalendarDays, Landmark, Wallet, CreditCard, Trash2, Lock, Unlock, Settings, Folder, Pencil, Building2 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 
@@ -132,11 +132,45 @@ const Financial: React.FC = () => {
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterType, setFilterType] = useState('ALL');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterDatePreset, setFilterDatePreset] = useState('ALL');
+
+  // Atalhos rápidos de data
+  const applyDatePreset = (preset: string) => {
+    setFilterDatePreset(preset);
+    const today = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    if (preset === 'TODAY') {
+      setFilterDateFrom(fmt(today));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'WEEK') {
+      const weekAgo = new Date(today);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      setFilterDateFrom(fmt(weekAgo));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'MONTH') {
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFilterDateFrom(fmt(monthStart));
+      setFilterDateTo(fmt(today));
+    } else if (preset === 'LAST_MONTH') {
+      const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+      setFilterDateFrom(fmt(lastMonthStart));
+      setFilterDateTo(fmt(lastMonthEnd));
+    } else {
+      setFilterDateFrom('');
+      setFilterDateTo('');
+    }
+  };
 
   const filteredTransactions = transactions.filter(t => {
     if (filterText && !t.description.toLowerCase().includes(filterText.toLowerCase()) && !t.entityName.toLowerCase().includes(filterText.toLowerCase())) return false;
     if (filterStatus !== 'ALL' && t.status !== filterStatus) return false;
     if (filterType !== 'ALL' && t.type !== filterType) return false;
+    if (filterDateFrom && t.dueDate < filterDateFrom) return false;
+    if (filterDateTo && t.dueDate > filterDateTo) return false;
     return true;
   });
 
@@ -166,30 +200,35 @@ const Financial: React.FC = () => {
     };
 
     filtered.forEach(t => {
+      const grupo = t.costCenterGroup || '';
       if (t.type === 'INCOME') {
-        if (t.costCenterGroup?.includes('Receita')) {
+        // Receita: se tem grupo de Receita OU se não tem centro de custo (default = receita)
+        if (grupo.includes('Receita') || grupo === 'Outros' || !grupo) {
           receitaBruta += t.amount;
-          // Agrupar por sub-centro
-          const existing = details.receitas.find(d => d.nome === t.costCenterName);
+          const nome = t.costCenterName || 'Receitas Gerais';
+          const existing = details.receitas.find(d => d.nome === nome);
           if (existing) existing.valor += t.amount;
-          else details.receitas.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Financeiro')) {
+          else details.receitas.push({ nome, valor: t.amount });
+        } else if (grupo.includes('Financeiro')) {
           resultadoFinanceiro += t.amount;
         }
       } else {
-        // Expense
-        if (t.costCenterGroup?.includes('Custos Diretos') || t.costCenterGroup?.includes('CPV')) {
-          custosDiretos += t.amount; // Valor negativo
-          const existing = details.custos.find(d => d.nome === t.costCenterName);
+        // Despesa: classificar pelo grupo DRE do centro de custo
+        if (grupo.includes('Custos Diretos') || grupo.includes('CPV')) {
+          custosDiretos += t.amount;
+          const nome = t.costCenterName || 'Custos Diversos';
+          const existing = details.custos.find(d => d.nome === nome);
           if (existing) existing.valor += t.amount;
-          else details.custos.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Despesas')) {
-          despesasFixas += t.amount;
-          const existing = details.despesas.find(d => d.nome === t.costCenterName);
-          if (existing) existing.valor += t.amount;
-          else details.despesas.push({ nome: t.costCenterName || 'Outros', valor: t.amount });
-        } else if (t.costCenterGroup?.includes('Financeiro')) {
+          else details.custos.push({ nome, valor: t.amount });
+        } else if (grupo.includes('Financeiro')) {
           resultadoFinanceiro += t.amount;
+        } else {
+          // Despesas operacionais (inclui 'Despesas', 'Outros' e sem centro de custo)
+          despesasFixas += t.amount;
+          const nome = t.costCenterName || 'Despesas Gerais';
+          const existing = details.despesas.find(d => d.nome === nome);
+          if (existing) existing.valor += t.amount;
+          else details.despesas.push({ nome, valor: t.amount });
         }
       }
     });
@@ -944,7 +983,7 @@ const Financial: React.FC = () => {
               <h4 className="font-bold text-slate-300 text-sm truncate">{acc.banco_nome}</h4>
               <p className="text-xs text-slate-500 mb-2 truncate">Ag: {acc.agencia} • CC: {acc.conta}</p>
               <div className="text-xl font-black text-white tracking-tight">
-                R$ {acc.saldo_atual?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                R$ {acc.saldo_atual?.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
 
               {/* Delete Button (Hover) */}
@@ -964,7 +1003,7 @@ const Financial: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard
           title="Disponibilidade Total (Caixa + Bancos)"
-          value={`R$ ${stats.totalAvailable.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.totalAvailable.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="Atualizado agora"
           trendUp={true}
           icon={<Wallet size={24} />}
@@ -972,7 +1011,7 @@ const Financial: React.FC = () => {
         />
         <StatCard
           title="Previsão de Recebimento"
-          value={`R$ ${stats.income30d.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.income30d.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="A receber"
           trendUp={true}
           icon={<ArrowUpRight size={24} />}
@@ -980,7 +1019,7 @@ const Financial: React.FC = () => {
         />
         <StatCard
           title="Previsão de Pagamento"
-          value={`R$ ${stats.expense30d.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${stats.expense30d.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           trend="A pagar"
           trendUp={false}
           icon={<ArrowDownLeft size={24} />}
@@ -1003,39 +1042,81 @@ const Financial: React.FC = () => {
 
           {/* Painel de Filtros */}
           {showFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-900 rounded-xl border border-slate-800 animate-in slide-in-from-top-2">
-              <input
-                placeholder="Buscar por descrição, cliente..."
-                value={filterText}
-                onChange={e => setFilterText(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              />
-              <select
-                value={filterType}
-                onChange={e => setFilterType(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Todas as Movimentações</option>
-                <option value="INCOME">Apenas Receitas</option>
-                <option value="EXPENSE">Apenas Despesas</option>
-              </select>
-              <select
-                value={filterStatus}
-                onChange={e => setFilterStatus(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Todos os Status</option>
-                <option value="PENDING">Pendente</option>
-                <option value="PAID">Pago / Recebido</option>
-                <option value="OVERDUE">Vencido</option>
-                <option value="CANCELADO">Cancelado</option>
-              </select>
-              <button
-                onClick={() => { setFilterText(''); setFilterType('ALL'); setFilterStatus('ALL'); }}
-                className="text-xs text-slate-500 hover:text-white underline"
-              >
-                Limpar Filtros
-              </button>
+            <div className="flex flex-col gap-3 p-4 bg-slate-900 rounded-xl border border-slate-800 animate-in slide-in-from-top-2">
+              {/* Atalhos rápidos de data */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <CalendarDays size={14} className="text-slate-500" />
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Período:</span>
+                {[
+                  { key: 'ALL', label: 'Todos' },
+                  { key: 'TODAY', label: 'Hoje' },
+                  { key: 'WEEK', label: '7 dias' },
+                  { key: 'MONTH', label: 'Mês atual' },
+                  { key: 'LAST_MONTH', label: 'Mês anterior' },
+                ].map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => applyDatePreset(p.key)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterDatePreset === p.key
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <div className="flex items-center gap-1 ml-2">
+                  <input
+                    type="date"
+                    value={filterDateFrom}
+                    onChange={e => { setFilterDateFrom(e.target.value); setFilterDatePreset('CUSTOM'); }}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-white text-xs outline-none focus:border-blue-500"
+                  />
+                  <span className="text-slate-600 text-xs">até</span>
+                  <input
+                    type="date"
+                    value={filterDateTo}
+                    onChange={e => { setFilterDateTo(e.target.value); setFilterDatePreset('CUSTOM'); }}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-white text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              {/* Filtros de texto, tipo e status */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input
+                  placeholder="Buscar por descrição, cliente..."
+                  value={filterText}
+                  onChange={e => setFilterText(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                />
+                <select
+                  value={filterType}
+                  onChange={e => setFilterType(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">Todas as Movimentações</option>
+                  <option value="INCOME">Apenas Receitas</option>
+                  <option value="EXPENSE">Apenas Despesas</option>
+                </select>
+                <select
+                  value={filterStatus}
+                  onChange={e => setFilterStatus(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">Todos os Status</option>
+                  <option value="PENDING">Pendente</option>
+                  <option value="PAID">Pago / Recebido</option>
+                  <option value="OVERDUE">Vencido</option>
+                  <option value="CANCELADO">Cancelado</option>
+                </select>
+                <button
+                  onClick={() => { setFilterText(''); setFilterType('ALL'); setFilterStatus('ALL'); applyDatePreset('ALL'); }}
+                  className="text-xs text-slate-500 hover:text-white underline"
+                >
+                  Limpar Filtros
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1130,7 +1211,7 @@ const Financial: React.FC = () => {
                       {tr.status === 'OVERDUE' && <span className="ml-2 text-[9px] bg-rose-500/20 px-1 rounded">VENCIDO</span>}
                     </td>
                     <td className={`px-6 py-4 text-right font-black text-sm ${tr.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {tr.amount >= 0 ? '+' : '-'} R$ {Math.abs(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      {tr.amount >= 0 ? '+' : '-'} R$ {Math.abs(tr.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex items-center justify-center gap-1">
@@ -1484,7 +1565,7 @@ const Financial: React.FC = () => {
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Total a {selectedTransaction.type === 'INCOME' ? 'Receber' : 'Pagar'}</label>
                 <div className={`text-3xl font-black tracking-tighter ${selectedTransaction.type === 'INCOME' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  R$ {settlementValues.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {settlementValues.total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
 
@@ -1695,7 +1776,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 sticky top-0 z-10">
                   <td className="p-4 font-black text-emerald-400">1. RECEITA OPERACIONAL BRUTA</td>
                   <td className="p-4 text-right font-black text-emerald-400">
-                    R$ {dreData.receitaBruta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {dreData.receitaBruta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
                 {dreData.details.receitas.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1703,7 +1784,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-emerald-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono">
-                      {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -1712,7 +1793,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-950/50">
                   <td className="p-3 font-bold text-rose-400 pl-6 text-xs">(-) Impostos / Deduções (Simulado 6%)</td>
                   <td className="p-3 text-right font-bold text-rose-400 text-xs">
-                    (R$ {(dreData.receitaBruta * 0.06).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {(dreData.receitaBruta * 0.06).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
 
@@ -1720,7 +1801,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t border-slate-700">
                   <td className="p-3 font-black text-white text-xs uppercase tracking-wider">= RECEITA LÍQUIDA</td>
                   <td className="p-3 text-right font-black text-white">
-                    R$ {(dreData.receitaBruta * 0.94).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -1728,7 +1809,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 mt-4 border-t-2 border-slate-800 sticky top-10">
                   <td className="p-4 font-black text-amber-500">2. CUSTOS DIRETOS (CPV)</td>
                   <td className="p-4 text-right font-black text-amber-500">
-                    (R$ {Math.abs(dreData.custosDiretos).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {Math.abs(dreData.custosDiretos).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
                 {dreData.details.custos.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1736,7 +1817,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-amber-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono text-rose-400">
-                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                     </td>
                   </tr>
                 ))}
@@ -1745,7 +1826,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t border-slate-700">
                   <td className="p-3 font-black text-white text-xs uppercase tracking-wider">= LUCRO BRUTO</td>
                   <td className="p-3 text-right font-black text-white">
-                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -1753,7 +1834,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-900 mt-4 border-t-2 border-slate-800">
                   <td className="p-4 font-black text-rose-500">3. DESPESAS OPERACIONAIS</td>
                   <td className="p-4 text-right font-black text-rose-500">
-                    (R$ {Math.abs(dreData.despesasFixas).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    (R$ {Math.abs(dreData.despesasFixas).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                   </td>
                 </tr>
                 {dreData.details.despesas.length === 0 && <tr className="bg-slate-950/50"><td colSpan={2} className="p-2 text-center text-xs text-slate-600">Sem registros</td></tr>}
@@ -1761,7 +1842,7 @@ const Financial: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-800/50 transition">
                     <td className="px-8 py-2 text-slate-400 text-xs flex items-center gap-2"><div className="w-1 h-1 rounded-full bg-rose-500/50"></div>{item.nome}</td>
                     <td className="px-4 py-2 text-right text-slate-400 text-xs font-mono text-rose-400">
-                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                      ({Math.abs(item.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                     </td>
                   </tr>
                 ))}
@@ -1770,7 +1851,7 @@ const Financial: React.FC = () => {
                 <tr className="bg-slate-800 border-t-2 border-slate-600">
                   <td className="p-4 font-black text-white text-lg">= EBITDA</td>
                   <td className={`p-4 text-right font-black text-lg ${(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(dreData.receitaBruta * 0.94 - Math.abs(dreData.custosDiretos) - Math.abs(dreData.despesasFixas)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
               </tbody>
