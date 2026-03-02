@@ -8,7 +8,7 @@ export const analyzeFleetEfficiency = async (data: any) => {
     );
     return result;
   } catch (error) {
-    console.error(`AI Analysis Error (${getProviderLabel()}):`, error);
+    console.error(`AI Analysis Error (${await getProviderLabel()}):`, error);
     return "Não foi possível gerar a análise no momento.";
   }
 };

@@ -108,7 +108,7 @@ const fileToBase64 = (file: File): Promise<string> => {
 // ============================================
 
 export const processTimecardImage = async (file: File): Promise<TimecardData> => {
-    const config = getConfig();
+    const config = await getConfig();
     if (!config.apiKey) {
         throw new Error(`API key não configurada para ${config.provider}. Configure em Configurações > Integrações & API.`);
     }

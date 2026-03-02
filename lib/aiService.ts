@@ -1,6 +1,9 @@
 // =============================================================================
 // AI Service - Multi-Provider (OpenAI / Gemini / Groq)
+// Busca chaves da tabela system_settings (Supabase) com fallback pro .env.local
 // =============================================================================
+
+import { getSettingValue } from './getGeminiKey';
 
 export type AIProvider = 'openai' | 'gemini' | 'groq';
 
@@ -11,41 +14,47 @@ interface AIConfig {
   baseUrl: string;
 }
 
-const PROVIDER_DEFAULTS: Record<AIProvider, { model: string; baseUrl: string; envKey: string }> = {
+const PROVIDER_DEFAULTS: Record<AIProvider, { model: string; baseUrl: string; envKey: string; dbKey: string }> = {
   openai: {
     model: 'gpt-4o-mini',
     baseUrl: 'https://api.openai.com/v1',
     envKey: 'VITE_OPENAI_API_KEY',
+    dbKey: 'openai_api_key',
   },
   gemini: {
     model: 'gemini-2.5-flash',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     envKey: 'VITE_GEMINI_API_KEY',
+    dbKey: 'gemini_api_key',
   },
   groq: {
     model: 'llama-3.3-70b-versatile',
     baseUrl: 'https://api.groq.com/openai/v1',
     envKey: 'VITE_GROQ_API_KEY',
+    dbKey: 'groq_api_key',
   },
 };
 
 /**
  * Detecta provider ativo e retorna config
- * Prioridade: VITE_AI_PROVIDER env var > primeira key disponivel
+ * Prioridade: VITE_AI_PROVIDER env var > primeira key disponivel (DB > env)
  */
-export function getConfig(): AIConfig {
+export async function getConfig(): Promise<AIConfig> {
   const envProvider = (import.meta.env.VITE_AI_PROVIDER || '').toLowerCase() as AIProvider;
 
   // Se tem provider explicito, usa ele
   if (envProvider && PROVIDER_DEFAULTS[envProvider]) {
     const def = PROVIDER_DEFAULTS[envProvider];
-    const apiKey = import.meta.env[def.envKey] || '';
+    const dbKey = await getSettingValue(def.dbKey);
+    const apiKey = dbKey || import.meta.env[def.envKey] || '';
     return { provider: envProvider, apiKey, model: def.model, baseUrl: def.baseUrl };
   }
 
-  // Fallback: primeira key que existir
+  // Fallback: primeira key que existir (DB primeiro, depois env)
   for (const [prov, def] of Object.entries(PROVIDER_DEFAULTS)) {
-    const key = import.meta.env[def.envKey];
+    const dbKey = await getSettingValue(def.dbKey);
+    const envKey = import.meta.env[def.envKey];
+    const key = dbKey || envKey;
     if (key) {
       return { provider: prov as AIProvider, apiKey: key, model: def.model, baseUrl: def.baseUrl };
     }
@@ -59,8 +68,8 @@ export function getConfig(): AIConfig {
  * Gera texto com o provider ativo (sem imagem)
  */
 export async function generateText(prompt: string, systemInstruction?: string): Promise<string> {
-  const config = getConfig();
-  if (!config.apiKey) throw new Error(`API key não configurada para ${config.provider}. Verifique o .env.local`);
+  const config = await getConfig();
+  if (!config.apiKey) throw new Error(`API key não configurada para ${config.provider}. Configure em Configurações > Integrações & API.`);
 
   if (config.provider === 'gemini') {
     return callGemini(config, prompt, systemInstruction);
@@ -78,8 +87,8 @@ export async function generateWithImage(
   mimeType: string,
   systemInstruction?: string
 ): Promise<string> {
-  const config = getConfig();
-  if (!config.apiKey) throw new Error(`API key não configurada para ${config.provider}. Verifique o .env.local`);
+  const config = await getConfig();
+  if (!config.apiKey) throw new Error(`API key não configurada para ${config.provider}. Configure em Configurações > Integrações & API.`);
 
   if (config.provider === 'gemini') {
     return callGeminiWithImage(config, prompt, imageBase64, mimeType, systemInstruction);
@@ -89,8 +98,8 @@ export async function generateWithImage(
 }
 
 /** Retorna nome amigavel do provider ativo */
-export function getProviderLabel(): string {
-  const config = getConfig();
+export async function getProviderLabel(): Promise<string> {
+  const config = await getConfig();
   const labels: Record<AIProvider, string> = {
     openai: `OpenAI (${config.model})`,
     gemini: `Google Gemini (${config.model})`,

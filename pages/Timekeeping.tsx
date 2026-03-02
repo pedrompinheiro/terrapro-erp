@@ -69,12 +69,12 @@ const Timekeeping: React.FC = () => {
     const [hasGeminiKey, setHasGeminiKey] = useState(true);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Verificar chave Gemini
+    // Verificar chave IA (multi-provider)
     useEffect(() => {
         const checkKey = async () => {
-            const { getGeminiKey } = await import('../lib/getGeminiKey');
-            const key = await getGeminiKey();
-            setHasGeminiKey(!!key);
+            const { getConfig } = await import('../lib/aiService');
+            const config = await getConfig();
+            setHasGeminiKey(!!config.apiKey);
         };
         checkKey();
     }, []);
