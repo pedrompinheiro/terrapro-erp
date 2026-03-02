@@ -17,10 +17,12 @@ interface WhatsAppGroup {
 interface WhatsAppMessage {
     id: string;
     sender_name: string;
+    sender_phone?: string;
     content: string;
     received_at: string;
     ai_intent?: string;
     ai_asset?: string;
+    ai_urgency?: string;
     ai_action?: string;
     status: 'PENDING' | 'PROCESSED' | 'IGNORED';
     group_id?: string;
@@ -39,7 +41,7 @@ interface WhatsAppCampaign {
     id: string;
     name: string;
     target_audience: string;
-    status: 'DRAFT' | 'SCHEDULED' | 'SENT';
+    status: 'DRAFT' | 'SCHEDULED' | 'SENDING' | 'SENT';
     sent_count: number;
     total_count: number;
 }
@@ -282,7 +284,6 @@ const WhatsAppAutomation: React.FC = () => {
     const handleCreateCampaign = async () => {
         if (!campaignForm.name || !campaignForm.message) return alert("Preencha Nome e Mensagem");
 
-        // Simula criação
         await supabase.from('whatsapp_campaigns').insert({
             name: campaignForm.name,
             target_audience: campaignForm.target,
@@ -295,7 +296,49 @@ const WhatsAppAutomation: React.FC = () => {
         setCampaignForm({ name: '', target: 'ALL_CLIENTS', message: '' });
         setIsCampaignModalOpen(false);
         refetchCampaigns();
-        alert("Campanha Agendada com Sucesso! 🚀");
+        alert("Campanha criada! Clique em Enviar para disparar.");
+    };
+
+    // --- Webhook ---
+    const handleConfigureWebhook = async () => {
+        try {
+            const webhookUrl = `https://xpufmosdhhemcubzswcv.supabase.co/functions/v1/whatsapp-webhook`;
+            await evolutionService.setWebhook(webhookUrl);
+            addLog('✅ Webhook configurado! Mensagens reais vão aparecer no Stream.');
+        } catch (error) {
+            addLog('❌ Erro ao configurar webhook. Verifique a conexão.');
+        }
+    };
+
+    // --- Approve / Ignore messages ---
+    const handleApproveMessage = async (id: string, action?: string) => {
+        await supabase.from('whatsapp_messages').update({ status: 'PROCESSED' }).eq('id', id);
+        refetchMessages();
+    };
+
+    const handleIgnoreMessage = async (id: string) => {
+        await supabase.from('whatsapp_messages').update({ status: 'IGNORED' }).eq('id', id);
+        refetchMessages();
+    };
+
+    // --- Execute Campaign ---
+    const handleExecuteCampaign = async (campaignId: string) => {
+        if (!confirm('Iniciar envio da campanha? As mensagens serão enviadas para todos os contatos do público-alvo.')) return;
+        try {
+            const { data, error } = await supabase.functions.invoke('whatsapp-campaign', {
+                body: { action: 'execute', campaign_id: campaignId }
+            });
+            if (error) {
+                alert('Erro ao executar campanha: ' + error.message);
+            } else if (data?.success) {
+                alert(`Campanha concluída! ${data.sent} enviados, ${data.failed} falharam.`);
+            } else {
+                alert('Erro: ' + (data?.error || 'Desconhecido'));
+            }
+            refetchCampaigns();
+        } catch (err) {
+            alert('Erro ao executar campanha');
+        }
     };
 
     return (
@@ -351,9 +394,14 @@ const WhatsAppAutomation: React.FC = () => {
                                     </div>
                                     <h4 className="text-xl font-bold text-white">WhatsApp Conectado</h4>
                                     <p className="text-slate-500 text-sm mt-2">Instância: <span className="font-mono text-emerald-500">terrapro_bot</span></p>
-                                    <button onClick={handleDisconnect} className="mt-6 text-xs text-red-400 font-bold hover:text-red-300 uppercase tracking-widest border border-red-900/30 px-4 py-2 rounded-lg bg-red-950/20">
-                                        Desconectar Robô
-                                    </button>
+                                    <div className="flex gap-3 mt-6 justify-center">
+                                        <button onClick={handleConfigureWebhook} className="text-xs text-blue-400 font-bold hover:text-blue-300 uppercase tracking-widest border border-blue-900/30 px-4 py-2 rounded-lg bg-blue-950/20">
+                                            Configurar Webhook
+                                        </button>
+                                        <button onClick={handleDisconnect} className="text-xs text-red-400 font-bold hover:text-red-300 uppercase tracking-widest border border-red-900/30 px-4 py-2 rounded-lg bg-red-950/20">
+                                            Desconectar Robô
+                                        </button>
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="text-center py-6">
@@ -482,7 +530,7 @@ const WhatsAppAutomation: React.FC = () => {
                                                         <Zap size={14} className="text-[#007a33]" />
                                                         <span className="text-xs font-black text-[#007a33] uppercase tracking-widest">Análise da IA</span>
                                                     </div>
-                                                    <div className="grid grid-cols-2 gap-4 mb-4">
+                                                    <div className="grid grid-cols-3 gap-4 mb-4">
                                                         <div>
                                                             <p className="text-[10px] uppercase text-slate-500 font-bold">Intenção Detectada</p>
                                                             <p className="text-sm font-bold text-white">{msg.ai_intent || 'Desconhecida'}</p>
@@ -491,13 +539,19 @@ const WhatsAppAutomation: React.FC = () => {
                                                             <p className="text-[10px] uppercase text-slate-500 font-bold">Alvo / Ativo</p>
                                                             <p className="text-sm font-bold text-white">{msg.ai_asset || '-'}</p>
                                                         </div>
+                                                        <div>
+                                                            <p className="text-[10px] uppercase text-slate-500 font-bold">Urgência</p>
+                                                            <p className={`text-sm font-bold ${msg.ai_urgency === 'HIGH' ? 'text-red-400' : msg.ai_urgency === 'MEDIUM' ? 'text-amber-400' : 'text-slate-300'}`}>
+                                                                {msg.ai_urgency || '-'}
+                                                            </p>
+                                                        </div>
                                                     </div>
                                                     {msg.status === 'PENDING' && (
                                                         <div className="flex gap-3 mt-4 pt-4 border-t border-[#007a33]/20">
-                                                            <button className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors">
+                                                            <button onClick={() => handleApproveMessage(msg.id, msg.ai_action)} className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors">
                                                                 Aprovar: {msg.ai_action || 'Processar'}
                                                             </button>
-                                                            <button className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors">
+                                                            <button onClick={() => handleIgnoreMessage(msg.id)} className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors">
                                                                 Ignorar
                                                             </button>
                                                         </div>
@@ -600,12 +654,22 @@ const WhatsAppAutomation: React.FC = () => {
                                             {cp.sent_count} <span className="text-slate-600">/ {cp.total_count || '-'}</span>
                                         </td>
                                         <td className="px-8 py-5 text-center">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${cp.status === 'SENT' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                                                {cp.status === 'SENT' ? 'Enviado' : 'Agendado'}
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                                                cp.status === 'SENT' ? 'bg-emerald-500/10 text-emerald-500' :
+                                                cp.status === 'SENDING' ? 'bg-blue-500/10 text-blue-500 animate-pulse' :
+                                                'bg-amber-500/10 text-amber-500'
+                                            }`}>
+                                                {cp.status === 'SENT' ? 'Enviado' : cp.status === 'SENDING' ? 'Enviando...' : 'Agendado'}
                                             </span>
                                         </td>
                                         <td className="px-8 py-5 text-right">
-                                            <button className="text-slate-400 hover:text-white"><RefreshCw size={16} /></button>
+                                            {cp.status === 'SCHEDULED' ? (
+                                                <button onClick={() => handleExecuteCampaign(cp.id)} className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 ml-auto" title="Enviar Campanha">
+                                                    <Send size={16} /> <span className="text-xs font-bold">Enviar</span>
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => refetchCampaigns()} className="text-slate-400 hover:text-white"><RefreshCw size={16} /></button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

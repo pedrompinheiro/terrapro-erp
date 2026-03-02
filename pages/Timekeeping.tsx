@@ -14,6 +14,7 @@ import {
     Sparkles, AlertCircle, Clock, Calendar
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import TimeInput from '../components/TimeInput';
 import {
     processTimecardImage,
     processTimecardBatch,
@@ -32,6 +33,7 @@ interface Employee {
     id: string;
     name: string;
     registration_number: string;
+    company_id?: string;
 }
 
 interface OcrCard {
@@ -46,7 +48,11 @@ interface OcrCard {
     expanded: boolean;
     editedEntries?: TimecardEntry[];
     selectedDays: Set<number>; // dias selecionados para salvar
+    overrideMonth?: number;   // mês manual (1-12)
+    overrideYear?: number;    // ano manual
 }
+
+const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
 // ============================================
 // Componente Principal
@@ -78,7 +84,7 @@ const Timekeeping: React.FC = () => {
         const fetchEmployees = async () => {
             const { data, error } = await supabase
                 .from('employees')
-                .select('id, full_name, registration_number')
+                .select('id, full_name, registration_number, company_id')
                 .eq('active', true)
                 .order('full_name');
 
@@ -86,7 +92,8 @@ const Timekeeping: React.FC = () => {
                 setEmployees(data.map((e: any) => ({
                     id: e.id,
                     name: e.full_name || 'Sem Nome',
-                    registration_number: e.registration_number || ''
+                    registration_number: e.registration_number || '',
+                    company_id: e.company_id
                 })));
             }
         };
@@ -275,6 +282,28 @@ const Timekeeping: React.FC = () => {
         });
     };
 
+    const changeMonthYear = (cardIdx: number, month: number, year: number) => {
+        setCards(prev => {
+            const copy = [...prev];
+            const card = copy[cardIdx];
+            const entries = card.editedEntries || card.data?.entries || [];
+
+            // Recalcular as datas de cada entry com o novo mês/ano
+            const updatedEntries = entries.map(e => ({
+                ...e,
+                date: `${year}-${String(month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+            }));
+
+            copy[cardIdx] = {
+                ...card,
+                overrideMonth: month,
+                overrideYear: year,
+                editedEntries: updatedEntries,
+            };
+            return copy;
+        });
+    };
+
     const changeEmployee = (cardIdx: number, empId: string) => {
         setCards(prev => {
             const copy = [...prev];
@@ -300,6 +329,12 @@ const Timekeeping: React.FC = () => {
         const cardsToSave = cards.filter(
             c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0
         );
+        console.log('[SAVE] Cards to save:', cardsToSave.length, cardsToSave.map(c => ({
+            emp: c.matchedEmployeeName,
+            empId: c.matchedEmployeeId,
+            days: c.selectedDays.size,
+            status: c.status
+        })));
         setTotalToSave(cardsToSave.reduce((sum, c) => sum + c.selectedDays.size, 0));
 
         let count = 0;
@@ -307,23 +342,40 @@ const Timekeeping: React.FC = () => {
 
         for (let i = 0; i < updated.length; i++) {
             const card = updated[i];
-            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) continue;
+            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) {
+                console.log(`[SAVE] Skipping card ${i}: status=${card.status}, empId=${card.matchedEmployeeId}, days=${card.selectedDays?.size}`);
+                continue;
+            }
+
+            // Pegar mês/ano correto: override > OCR > atual
+            const saveMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+            const saveYear = card.overrideYear || card.data?.year || new Date().getFullYear();
 
             const entries = (card.editedEntries || card.data?.entries || [])
-                .filter(e => card.selectedDays.has(e.day));
+                .filter(e => card.selectedDays.has(e.day))
+                .map(e => ({
+                    ...e,
+                    // SEMPRE recalcular a data com mês/ano correto
+                    date: `${saveYear}-${String(saveMonth).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                }));
 
-            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId);
+            const emp = employees.find(e => e.id === card.matchedEmployeeId);
+            console.log(`[SAVE] Card ${i}: emp=${emp?.name}, company_id=${emp?.company_id}, month=${saveMonth}/${saveYear}, entries=${entries.length}`);
+            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId, emp?.company_id);
+            console.log(`[SAVE] Records to upsert:`, records.length, records.length > 0 ? records[0] : 'EMPTY');
 
             let allOk = true;
             for (const record of records) {
-                const { error } = await supabase
+                console.log(`[SAVE] Upserting:`, JSON.stringify(record));
+                const { error, data } = await supabase
                     .from('time_entries')
                     .upsert(record, { onConflict: 'employee_id,date' as any });
 
                 if (error) {
-                    console.error('Erro ao salvar:', record.date, error);
+                    console.error('[SAVE] ERRO ao salvar:', record.date, JSON.stringify(error));
                     allOk = false;
                 } else {
+                    console.log(`[SAVE] OK: ${record.date}`, data);
                     count++;
                     setSavedCount(count);
                 }
@@ -511,6 +563,7 @@ const Timekeeping: React.FC = () => {
                                     });
                                 }}
                                 onChangeEmployee={(empId) => changeEmployee(idx, empId)}
+                                onChangeMonthYear={(month, year) => changeMonthYear(idx, month, year)}
                                 onUpdateEntry={(entryIdx, field, value) =>
                                     updateEntryField(idx, entryIdx, field, value)
                                 }
@@ -545,6 +598,7 @@ interface OcrCardProps {
     onRetry: () => void;
     onToggleExpand: () => void;
     onChangeEmployee: (empId: string) => void;
+    onChangeMonthYear: (month: number, year: number) => void;
     onUpdateEntry: (entryIdx: number, field: keyof TimecardEntry, value: string) => void;
     onToggleDay: (day: number) => void;
     onToggleAllDays: () => void;
@@ -552,7 +606,7 @@ interface OcrCardProps {
 
 const OcrCardComponent: React.FC<OcrCardProps> = ({
     card, index, employees, onRemove, onRetry, onToggleExpand,
-    onChangeEmployee, onUpdateEntry, onToggleDay, onToggleAllDays
+    onChangeEmployee, onChangeMonthYear, onUpdateEntry, onToggleDay, onToggleAllDays
 }) => {
     const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
     const [empSearch, setEmpSearch] = useState('');
@@ -654,6 +708,39 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
                         </div>
                     )}
                 </div>
+
+                {/* Seletor de Mês/Ano */}
+                {card.status === 'success' && (
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <Calendar size={14} className="text-slate-400" />
+                        <select
+                            value={card.overrideMonth || card.data?.month || new Date().getMonth() + 1}
+                            onChange={e => {
+                                const m = Number(e.target.value);
+                                const y = card.overrideYear || card.data?.year || new Date().getFullYear();
+                                onChangeMonthYear(m, y);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:ring-2 focus:ring-violet-400 focus:border-transparent outline-none"
+                        >
+                            {MONTH_NAMES.map((name, i) => (
+                                <option key={i + 1} value={i + 1}>{name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={card.overrideYear || card.data?.year || new Date().getFullYear()}
+                            onChange={e => {
+                                const y = Number(e.target.value);
+                                const m = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+                                onChangeMonthYear(m, y);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:ring-2 focus:ring-violet-400 focus:border-transparent outline-none"
+                        >
+                            {[2024, 2025, 2026, 2027].map(y => (
+                                <option key={y} value={y}>{y}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {/* Seletor de Funcionário */}
                 {card.status === 'success' && (
@@ -803,17 +890,9 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
                                             {(['entrada1', 'saida1', 'entrada2', 'saida2', 'entrada3', 'saida3'] as const).map(field => (
                                                 <td key={field} className="px-1 py-1.5 text-center">
                                                     {card.status !== 'saved' ? (
-                                                        <input
-                                                            type="text"
-                                                            value={entry[field] || ''}
-                                                            onChange={e => onUpdateEntry(eIdx, field, e.target.value)}
-                                                            className={`w-16 px-1.5 py-1 text-center text-xs font-mono rounded border transition-colors ${
-                                                                entry[field]
-                                                                    ? 'border-slate-200 bg-white text-slate-700 focus:border-violet-400 focus:ring-1 focus:ring-violet-200'
-                                                                    : 'border-transparent bg-transparent text-slate-300'
-                                                            }`}
-                                                            placeholder="--:--"
-                                                            maxLength={5}
+                                                        <TimeInput
+                                                            value={entry[field]}
+                                                            onChange={v => onUpdateEntry(eIdx, field, v)}
                                                         />
                                                     ) : (
                                                         <span className="text-xs font-mono text-slate-600">

@@ -6,8 +6,7 @@
  * Autor: Claude Code Session (17/02/2026)
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getGeminiKey } from '../lib/getGeminiKey';
+import { generateWithImage, getProviderLabel, getConfig } from "../lib/aiService";
 
 // ============================================
 // Tipos
@@ -109,25 +108,15 @@ const fileToBase64 = (file: File): Promise<string> => {
 // ============================================
 
 export const processTimecardImage = async (file: File): Promise<TimecardData> => {
-    const apiKey = await getGeminiKey();
-    if (!apiKey) {
-        throw new Error("Chave Gemini AI não configurada. Vá em Configurações > Integrações & API para adicionar.");
+    const config = getConfig();
+    if (!config.apiKey) {
+        throw new Error(`API key não configurada para ${config.provider}. Configure em Configurações > Integrações & API.`);
     }
 
     const base64Data = await fileToBase64(file);
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
     const prompt = buildOcrPrompt();
 
-    const result = await model.generateContent([
-        prompt,
-        { inlineData: { data: base64Data, mimeType: file.type } },
-    ]);
-
-    const response = await result.response;
-    const text = response.text();
+    const text = await generateWithImage(prompt, base64Data, file.type);
 
     // Limpar possíveis blocos markdown
     const jsonString = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -336,12 +325,14 @@ const levenshtein = (a: string, b: string): number => {
 /** Converte dados OCR para formato de upsert no time_entries */
 export const ocrEntriesToTimeEntries = (
     entries: TimecardEntry[],
-    employeeId: string
+    employeeId: string,
+    companyId?: string
 ) => {
     return entries
         .filter(e => e.entrada1 || e.saida1 || e.entrada2 || e.saida2)  // Pular dias totalmente vazios
         .map(e => ({
             employee_id: employeeId,
+            company_id: companyId || undefined,
             date: e.date,
             entry_time: e.entrada1,
             break_start: e.saida1,

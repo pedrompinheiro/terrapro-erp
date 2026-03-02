@@ -53,6 +53,10 @@ export interface Asset {
 
   daily_cost_avg?: number;
 
+  nextRevision?: string;
+  efficiency?: number;
+  manuals?: ERPDocument[];
+
   coordinates?: { lat: number; lng: number };
   telemetry?: any; // JSONB
 

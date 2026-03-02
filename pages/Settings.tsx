@@ -434,18 +434,41 @@ const Settings: React.FC = () => {
         setTestingKey(setting.key);
         try {
             if (setting.key === 'gemini_api_key') {
-                // Testa Gemini fazendo uma chamada simples
-                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${value}`);
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${value}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: 'Responda apenas: OK' }] }] })
+                });
                 if (res.ok) {
-                    alert('Gemini AI: Conexão OK! Chave válida.');
+                    alert('Gemini AI (gemini-2.5-flash): Conexao OK!');
                 } else {
                     const data = await res.json();
                     alert('Gemini AI: ERRO - ' + (data.error?.message || res.statusText));
                 }
+            } else if (setting.key === 'openai_api_key') {
+                const res = await fetch('https://api.openai.com/v1/models', {
+                    headers: { 'Authorization': `Bearer ${value}` }
+                });
+                if (res.ok) {
+                    alert('OpenAI (GPT-4o-mini): Conexao OK!');
+                } else {
+                    const data = await res.json();
+                    alert('OpenAI: ERRO - ' + (data.error?.message || res.statusText));
+                }
+            } else if (setting.key === 'groq_api_key') {
+                const res = await fetch('https://api.groq.com/openai/v1/models', {
+                    headers: { 'Authorization': `Bearer ${value}` }
+                });
+                if (res.ok) {
+                    alert('Groq (Llama 3.3 70B): Conexao OK!');
+                } else {
+                    const data = await res.json();
+                    alert('Groq: ERRO - ' + (data.error?.message || res.statusText));
+                }
             } else if (setting.key === 'selsyn_api_key' || setting.key === 'selsyn_api_url') {
-                alert('Selsyn: Teste manual necessário. Verifique se a URL e token estão corretos na tela de GPS.');
+                alert('Selsyn: Teste manual necessario. Verifique se a URL e token estao corretos na tela de GPS.');
             } else {
-                alert('Teste não disponível para esta chave.');
+                alert('Teste nao disponivel para esta chave.');
             }
         } catch (error: any) {
             alert('Erro no teste: ' + error.message);

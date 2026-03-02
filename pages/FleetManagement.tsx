@@ -209,9 +209,14 @@ const FleetManagement: React.FC = () => {
 
     const assetToSave: Asset = {
       id: newAsset.id!,
+      company_id: newAsset.company_id || 'default',
+      code: newAsset.code || newAsset.id!,
       name: newAsset.name!,
       model: newAsset.model || 'Modelo Padrão',
+      brand: newAsset.brand || '',
       status: newAsset.status || AssetStatus.AVAILABLE,
+      horometer_total: newAsset.horometer_total || newAsset.horometer || 0,
+      odometer_total: newAsset.odometer_total || 0,
       horometer: newAsset.horometer || 0,
       nextRevision: newAsset.nextRevision || '100h',
       efficiency: newAsset.efficiency || 100,
@@ -684,7 +689,7 @@ const FleetManagement: React.FC = () => {
                 >
                   <option value="">-- Escolha um Ativo --</option>
                   {fleetData?.map(a => (
-                    <option key={a.id} value={a.id}>{a.title || a.name || a.id}</option>
+                    <option key={a.id} value={a.id}>{a.name || a.id}</option>
                   ))}
                 </select>
               </div>
