@@ -644,3 +644,41 @@ export interface NfeImportJob {
   created_at?: string;
   updated_at?: string;
 }
+
+// ============================================================
+// MÓDULO OS - CRIAÇÃO / EDIÇÃO
+// ============================================================
+
+export type OSFormTab = 'cliente' | 'servicos' | 'financeiro' | 'extras';
+
+export interface ChecklistItem {
+  label: string;
+  checked: boolean;
+  notes?: string;
+}
+
+export interface ServiceOrderLineItem {
+  _key: string;
+  id?: string;
+  item_id?: string;
+  product_code?: number;
+  description: string;
+  reference: string;
+  is_service: boolean;
+  is_product: boolean;
+  unit: string;
+  unit_cost: number;
+  unit_price: number;
+  quantity: number;
+  discount: number;
+  discount_percent: number;
+  total: number;
+  commission: number;
+  technician_code?: number;
+  technician_name: string;
+  item_date: string;
+  // UI-only
+  _searchText?: string;
+  _stockQty?: number;
+  _stockWarning?: boolean;
+}
