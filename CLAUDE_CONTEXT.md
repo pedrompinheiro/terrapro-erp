@@ -1,7 +1,7 @@
 # CONTEXTO DO PROJETO TERRAPRO ERP - SESSAO ATIVA
 
 > **IMPORTANTE**: Este arquivo deve ser lido no inicio de cada sessao para recuperar o contexto.
-> Ultima atualizacao: 2026-02-25
+> Ultima atualizacao: 2026-03-03
 
 ---
 
@@ -64,9 +64,20 @@
 - **Pagina**: `pages/TimecardCalc.tsx` - Calculo CLT completo
 - **Pagina**: `pages/Timekeeping.tsx` - Importacao OCR (Gemini AI)
 - **Servico**: `services/TimecardService.ts` - OCR reescrito, fuzzy matching
-- **Servico**: `services/timecardCalculator.ts` - Engine CLT
+- **Servico**: `services/timecardCalculator.ts` - Engine CLT (875 linhas)
 - **Componente**: `components/hr/WorkShiftForm.tsx` - 3 abas
+- **Componente**: `components/TimeInput.tsx` - Input de horario com mascara HH:MM
 - **SQL**: `sql/migrate_work_shifts.sql`, `sql/import_seculum_shifts.sql`
+- **Funcionalidades TimecardCalc**:
+  - Campos de horario editaveis inline com TimeInput
+  - Justificativa por periodo (1 e 2) com popover inline (digita letra no campo)
+  - Deslocar batidas por linha (botoes ‹/› no hover de cada dia)
+  - Relatorio geral em lote: modal com periodo De/Ate, preview HTML com toolbar imprimir/PDF
+  - Exportacao XLSX do relatorio geral (lib xlsx, uma aba por funcionario)
+  - Colunas: Dia, DS, Tp(FER/CMP), Ent.1-Sai.3, Trab, Esp, HE 50%, HE 100%, Extra, Falta, Not.
+  - Totais: Trabalhado, Esperado, HE 50/100%, HE Util/Sab/Dom/Fer, Faltas, Noturno, Saldo
+  - Banco: tabela `absence_justifications` (Atestado, Chuva, Dispensado, Sobreaviso)
+  - Banco: coluna `justification2` em `time_entries` para periodo 2
 
 ### 7. Financeiro
 - **Pagina**: `pages/Financial.tsx`
@@ -196,6 +207,36 @@
 ```bash
 npm install
 npm run dev
-# Acessa em http://localhost:5173
+# Acessa em http://localhost:3000
 # Precisa do .env.local com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
 ```
+
+---
+
+## SESSAO 2026-03-03 — RESUMO DE ALTERACOES
+
+### Branch: `claude/distracted-edison`
+
+**Commits realizados:**
+1. `e2aa8fc` — Relatorio em lote com periodo, deslocar por linha, fix justificativa
+2. `954e0ca` — Colunas HE 50% e HE 100% no relatorio geral
+3. `6e84f1b` — Exportacao XLSX e correcao coluna Tp
+
+**O que foi feito nesta sessao:**
+
+1. **Fix modal relatório geral** — Substituido selects `bulkMonth`/`bulkYear` (variaveis deletadas, causava crash) por inputs `type="date"` com `bulkStartDate`/`bulkEndDate`
+
+2. **Fix justificativa travando/piscando/sumindo dados** — Removido `useCallback` com closure stale que capturava `handleCalculate` antigo. Adicionado try/catch e checagem de erro DB em `handleSetPeriodJustification` e `handleSetJustification`
+
+3. **Deslocar batidas por linha** — Removido botoes DESLOCAR do header (avancava mes inteiro). Adicionado botoes ‹/› por linha na coluna "Mov." com hover reveal (Tailwind group/group-hover)
+
+4. **Colunas HE 50% e HE 100%** — Adicionadas no relatorio geral entre ESP e EXTRA, tanto no HTML quanto no XLSX
+
+5. **Coluna Tp corrigida** — Mostra apenas FER (feriado) e CMP (compensado), removido DOM/SAB redundante com coluna DS
+
+6. **Exportacao XLSX** — Botao "Salvar XLSX" no modal, gera arquivo com uma aba por funcionario usando lib `xlsx`. Formato: `Cartao_Ponto_DD-MM-YYYY_a_DD-MM-YYYY.xlsx`
+
+**Pendencias identificadas (nao implementadas):**
+- Espelho de Ponto (Portaria 1510) — identificado como faltante vs Secullum, nao solicitado
+- Faixas adicionais de HE (Ex75%) e ExNot (hora extra noturna separada) — Secullum tem, nao implementado
+- Adin./Atras. (adicional/atraso) tracking por dia — Secullum tem, nao implementado
