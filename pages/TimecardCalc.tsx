@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Calculator, Calendar, Clock, User, ChevronLeft, ChevronRight, Download, Loader2, Moon, AlertCircle, CheckCircle, Sun, CloudSun, Briefcase, RefreshCw, Shield, Printer } from 'lucide-react';
+import { Calculator, Calendar, Clock, User, ChevronLeft, ChevronRight, Download, Loader2, Moon, AlertCircle, CheckCircle, Sun, CloudSun, Briefcase, RefreshCw, Shield, Printer, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import TimeInput from '../components/TimeInput';
 import {
@@ -535,6 +536,132 @@ const TimecardCalc: React.FC = () => {
         }
     };
 
+    const handleBulkExportXlsx = async () => {
+        if (!bulkStartDate || !bulkEndDate) { alert('Selecione o período inicial e final.'); return; }
+        if (bulkStartDate > bulkEndDate) { alert('A data inicial deve ser anterior à data final.'); return; }
+
+        const [sy, sm] = bulkStartDate.split('-').map(Number);
+        const DOW = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+
+        setBulkPrinting(true);
+        setBulkProgress({ current: 0, total: 0, name: 'Buscando funcionários...' });
+
+        try {
+            const { data: entriesData, error: entriesErr } = await supabase
+                .from('time_entries')
+                .select('employee_id')
+                .gte('date', bulkStartDate)
+                .lte('date', bulkEndDate);
+
+            if (entriesErr) throw entriesErr;
+            if (!entriesData || entriesData.length === 0) { alert('Nenhum funcionário tem batidas no período.'); setBulkPrinting(false); return; }
+
+            const uniqueIds = [...new Set(entriesData.map(e => e.employee_id))];
+            const empsWithShift = employees.filter(e => uniqueIds.includes(e.id) && e.work_shift_id);
+            if (empsWithShift.length === 0) { alert('Nenhum funcionário com turno definido.'); setBulkPrinting(false); return; }
+
+            setBulkProgress({ current: 0, total: empsWithShift.length, name: '' });
+
+            const wb = XLSX.utils.book_new();
+
+            for (let i = 0; i < empsWithShift.length; i++) {
+                const emp = empsWithShift[i];
+                setBulkProgress({ current: i + 1, total: empsWithShift.length, name: emp.full_name });
+
+                try {
+                    const calc = await calculateMonth(emp.id, emp.full_name, sy, sm, emp.work_shift_id!);
+                    if (!calc) continue;
+
+                    const filteredDays = calc.days.filter(d => d.date >= bulkStartDate && d.date <= bulkEndDate);
+
+                    // Header rows
+                    const shiftInfo = shifts.find(s => s.id === calc.shiftId);
+                    const headerRows = [
+                        ['CARTÃO DE PONTO — ' + emp.full_name],
+                        ['Mat: ' + (emp.registration_number || 'S/M'), 'Cargo: ' + (emp.job_title || '-'), 'Turno: ' + (shiftInfo?.name || '-')],
+                        [],
+                        ['Dia', 'DS', 'Tp', 'Ent.1', 'Saí.1', 'Ent.2', 'Saí.2', 'Ent.3', 'Saí.3', 'Trab.', 'Esp.', 'HE 50%', 'HE 100%', 'Extra', 'Falta', 'Not.'],
+                    ];
+
+                    // Day rows
+                    let fTotalWorked = 0, fTotalExpected = 0, fTotalAbsence = 0, fOvertime50 = 0, fOvertime100 = 0;
+                    let fOvertimeTotal = 0, fNightHours = 0, fDaysWorked = 0, fDaysAbsent = 0;
+
+                    const dayRows = filteredDays.map(d => {
+                        const dow = DOW[d.dayOfWeek];
+                        const tp = d.isHoliday ? 'FER' : d.dayType === 'compensated' ? 'CMP' : '';
+                        const he50 = d.overtimeTiers.filter(t => t.percentage <= 50).reduce((s, t) => s + t.minutes, 0);
+                        const he100 = d.overtimeTiers.filter(t => t.percentage > 50).reduce((s, t) => s + t.minutes, 0);
+
+                        fTotalWorked += d.workedMinutes;
+                        fTotalExpected += d.expectedMinutes;
+                        fTotalAbsence += d.absenceMinutes;
+                        fNightHours += d.nightMinutes;
+                        fOvertime50 += he50;
+                        fOvertime100 += he100;
+                        fOvertimeTotal += d.overtimeMinutes;
+                        if (d.workedMinutes > 0) fDaysWorked++;
+                        if (d.hasAbsence || d.isMissing) fDaysAbsent++;
+
+                        return [
+                            d.date.split('-')[2],
+                            dow,
+                            tp,
+                            d.punches.entrada1 || '',
+                            d.punches.saida1 || '',
+                            d.punches.entrada2 || '',
+                            d.punches.saida2 || '',
+                            d.punches.entrada3 || '',
+                            d.punches.saida3 || '',
+                            minutesToHHMM(d.workedMinutes),
+                            minutesToHHMM(d.expectedMinutes),
+                            he50 > 0 ? minutesToHHMM(he50) : '',
+                            he100 > 0 ? minutesToHHMM(he100) : '',
+                            d.overtimeMinutes > 0 ? minutesToHHMM(d.overtimeMinutes) : '',
+                            d.absenceMinutes > 0 ? minutesToHHMM(d.absenceMinutes) : '',
+                            d.nightMinutes > 0 ? minutesToHHMM(d.nightMinutes) : '',
+                        ];
+                    });
+
+                    const fBalance = fTotalWorked - fTotalExpected;
+                    const summaryRows = [
+                        [],
+                        ['Trabalhado:', minutesToHHMM(fTotalWorked), '', 'Esperado:', minutesToHHMM(fTotalExpected), '', 'HE 50%:', minutesToHHMM(fOvertime50), '', 'HE 100%:', minutesToHHMM(fOvertime100)],
+                        ['Faltas:', minutesToHHMM(fTotalAbsence), '', 'Noturno:', minutesToHHMM(fNightHours), '', 'Dias Trab:', String(fDaysWorked), '', 'Dias Falta:', String(fDaysAbsent)],
+                        ['Saldo:', (fBalance >= 0 ? '+' : '') + minutesToHHMM(fBalance)],
+                    ];
+
+                    const allRows = [...headerRows, ...dayRows, ...summaryRows];
+                    const ws = XLSX.utils.aoa_to_sheet(allRows);
+
+                    // Ajustar largura das colunas
+                    ws['!cols'] = [
+                        { wch: 5 }, { wch: 5 }, { wch: 5 },
+                        { wch: 7 }, { wch: 7 }, { wch: 7 }, { wch: 7 }, { wch: 7 }, { wch: 7 },
+                        { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+                    ];
+
+                    // Nome da aba (max 31 chars, sem caracteres especiais)
+                    const sheetName = emp.full_name.substring(0, 31).replace(/[\\/*?:\[\]]/g, '');
+                    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                } catch (err) {
+                    console.warn(`Erro ao calcular ${emp.full_name}:`, err);
+                }
+            }
+
+            if (wb.SheetNames.length === 0) { alert('Nenhum cálculo gerado.'); setBulkPrinting(false); return; }
+
+            const formatDateFile = (d: string) => d.split('-').reverse().join('-');
+            XLSX.writeFile(wb, `Cartao_Ponto_${formatDateFile(bulkStartDate)}_a_${formatDateFile(bulkEndDate)}.xlsx`);
+            setShowBulkModal(false);
+        } catch (err: any) {
+            console.error('Erro ao exportar XLSX:', err);
+            alert('Erro: ' + (err.message || err));
+        } finally {
+            setBulkPrinting(false);
+        }
+    };
+
     /** Gera HTML completo para impressão de múltiplos cartões de ponto */
     const generateBulkPrintHtml = (calculations: MonthCalculation[], m: number, y: number, filterStart?: string, filterEnd?: string): string => {
         const DOW = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
@@ -593,7 +720,7 @@ const TimecardCalc: React.FC = () => {
                 return `<tr style="${bgClass}">
                     <td style="text-align:center;font-weight:bold;">${dayLabel}</td>
                     <td style="text-align:center;font-size:10px;">${dow}</td>
-                    <td style="text-align:center;font-size:10px;">${isHoliday ? 'FER' : d.dayType === 'sunday' ? 'DOM' : d.dayType === 'saturday' ? 'SÁB' : d.dayType === 'compensated' ? 'CMP' : ''}</td>
+                    <td style="text-align:center;font-size:10px;">${isHoliday ? 'FER' : d.dayType === 'compensated' ? 'CMP' : ''}</td>
                     <td style="text-align:center;font-family:monospace;">${d.punches.entrada1 || ''}</td>
                     <td style="text-align:center;font-family:monospace;">${d.punches.saida1 || ''}</td>
                     <td style="text-align:center;font-family:monospace;">${d.punches.entrada2 || ''}</td>
@@ -1491,9 +1618,20 @@ const TimecardCalc: React.FC = () => {
                             <button
                                 onClick={() => setShowBulkModal(false)}
                                 disabled={bulkPrinting}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-700 transition-all disabled:opacity-50"
+                                className="px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-700 transition-all disabled:opacity-50"
                             >
                                 Cancelar
+                            </button>
+                            <button
+                                onClick={handleBulkExportXlsx}
+                                disabled={bulkPrinting || employees.length === 0}
+                                className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-500 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                {bulkPrinting ? (
+                                    <><Loader2 size={14} className="animate-spin" /> Gerando...</>
+                                ) : (
+                                    <><FileSpreadsheet size={14} /> Salvar XLSX</>
+                                )}
                             </button>
                             <button
                                 onClick={handleBulkPrint}
@@ -1501,15 +1639,9 @@ const TimecardCalc: React.FC = () => {
                                 className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white font-bold text-sm hover:bg-blue-500 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                                 {bulkPrinting ? (
-                                    <>
-                                        <Loader2 size={14} className="animate-spin" />
-                                        Gerando...
-                                    </>
+                                    <><Loader2 size={14} className="animate-spin" /> Gerando...</>
                                 ) : (
-                                    <>
-                                        <Printer size={14} />
-                                        Gerar Relatório
-                                    </>
+                                    <><Printer size={14} /> Imprimir / PDF</>
                                 )}
                             </button>
                         </div>
