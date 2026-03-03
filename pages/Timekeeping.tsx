@@ -55,6 +55,54 @@ interface OcrCard {
 const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
 // ============================================
+// Helper: validação de mês/ano
+// ============================================
+
+/** Corrige ano absurdo da IA (ex: 2006 vira 2026 se mês bate) */
+function autoCorrectYear(detectedYear: number): number {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    // Se o ano detectado é > 20 anos atrás ou no futuro distante, provavelmente a IA errou o século/década
+    if (detectedYear < currentYear - 2 || detectedYear > currentYear + 1) {
+        // Tenta corrigir mantendo os últimos 2 dígitos e usando o século correto
+        const last2 = detectedYear % 100;
+        const corrected = Math.floor(currentYear / 100) * 100 + last2;
+        // Se o corrigido fica próximo (±2 anos), usa ele
+        if (Math.abs(corrected - currentYear) <= 2) {
+            return corrected;
+        }
+        // Senão, retorna ano atual
+        return currentYear;
+    }
+    return detectedYear;
+}
+
+/** Verifica se mês/ano é o atual ou anterior */
+function isCurrentOrPreviousMonth(month: number, year: number): boolean {
+    const now = new Date();
+    const curM = now.getMonth() + 1;
+    const curY = now.getFullYear();
+
+    // Mês atual
+    if (month === curM && year === curY) return true;
+
+    // Mês anterior
+    let prevM = curM - 1;
+    let prevY = curY;
+    if (prevM === 0) { prevM = 12; prevY--; }
+    if (month === prevM && year === prevY) return true;
+
+    return false;
+}
+
+interface DateConfirmation {
+    cardIdx: number;
+    month: number;
+    year: number;
+    action: 'saveCard' | 'saveAll';
+}
+
+// ============================================
 // Componente Principal
 // ============================================
 
@@ -67,6 +115,7 @@ const Timekeeping: React.FC = () => {
     const [totalToSave, setTotalToSave] = useState(0);
     const [dragOver, setDragOver] = useState(false);
     const [hasGeminiKey, setHasGeminiKey] = useState(true);
+    const [dateConfirmation, setDateConfirmation] = useState<DateConfirmation | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Verificar chave IA (multi-provider)
@@ -168,6 +217,21 @@ const Timekeeping: React.FC = () => {
 
             try {
                 const data = await processTimecardImage(updated[i].file);
+
+                // Auto-corrigir ano absurdo da IA (ex: 2006 → 2026)
+                if (data.year) {
+                    const correctedYear = autoCorrectYear(data.year);
+                    if (correctedYear !== data.year) {
+                        console.log(`[OCR] Ano corrigido automaticamente: ${data.year} → ${correctedYear}`);
+                        data.year = correctedYear;
+                        // Recalcular datas das entries
+                        data.entries = data.entries.map(e => ({
+                            ...e,
+                            date: `${correctedYear}-${String(data.month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                        }));
+                    }
+                }
+
                 updated[i].status = 'success';
                 updated[i].data = data;
                 updated[i].editedEntries = [...data.entries];
@@ -209,6 +273,20 @@ const Timekeeping: React.FC = () => {
 
         try {
             const data = await processTimecardImage(updated[idx].file);
+
+            // Auto-corrigir ano absurdo da IA
+            if (data.year) {
+                const correctedYear = autoCorrectYear(data.year);
+                if (correctedYear !== data.year) {
+                    console.log(`[OCR] Ano corrigido automaticamente: ${data.year} → ${correctedYear}`);
+                    data.year = correctedYear;
+                    data.entries = data.entries.map(e => ({
+                        ...e,
+                        date: `${correctedYear}-${String(data.month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                    }));
+                }
+            }
+
             updated[idx].status = 'success';
             updated[idx].data = data;
             updated[idx].editedEntries = [...data.entries];
@@ -319,10 +397,61 @@ const Timekeeping: React.FC = () => {
     };
 
     // ============================================
+    // Validação de mês/ano antes de salvar
+    // ============================================
+
+    /** Verifica se algum card tem mês/ano fora do esperado e pede confirmação */
+    const getCardMonthYear = (card: OcrCard) => {
+        const month = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+        const year = card.overrideYear || card.data?.year || new Date().getFullYear();
+        return { month, year };
+    };
+
+    const requestSaveAll = () => {
+        // Verificar se algum card tem mês/ano fora do atual/anterior
+        const cardsToSave = cards.filter(
+            c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0
+        );
+        const unusual = cardsToSave.find(c => {
+            const { month, year } = getCardMonthYear(c);
+            return !isCurrentOrPreviousMonth(month, year);
+        });
+
+        if (unusual) {
+            const { month, year } = getCardMonthYear(unusual);
+            setDateConfirmation({ cardIdx: -1, month, year, action: 'saveAll' });
+        } else {
+            doSaveAll();
+        }
+    };
+
+    const requestSaveCard = (idx: number) => {
+        const card = cards[idx];
+        if (!card) return;
+        const { month, year } = getCardMonthYear(card);
+
+        if (!isCurrentOrPreviousMonth(month, year)) {
+            setDateConfirmation({ cardIdx: idx, month, year, action: 'saveCard' });
+        } else {
+            doSaveCard(idx);
+        }
+    };
+
+    const handleDateConfirm = () => {
+        if (!dateConfirmation) return;
+        if (dateConfirmation.action === 'saveAll') {
+            doSaveAll();
+        } else {
+            doSaveCard(dateConfirmation.cardIdx);
+        }
+        setDateConfirmation(null);
+    };
+
+    // ============================================
     // Salvar no Supabase
     // ============================================
 
-    const saveAll = async () => {
+    const doSaveAll = async () => {
         setIsSaving(true);
         setSavedCount(0);
 
@@ -394,7 +523,7 @@ const Timekeeping: React.FC = () => {
     // Salvar card individual
     // ============================================
 
-    const saveCard = async (idx: number) => {
+    const doSaveCard = async (idx: number) => {
         const card = cards[idx];
         if (!card || card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) return;
 
@@ -508,7 +637,7 @@ const Timekeeping: React.FC = () => {
 
                         {readyToSave > 0 && (
                             <button
-                                onClick={saveAll}
+                                onClick={requestSaveAll}
                                 disabled={isSaving}
                                 className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors"
                             >
@@ -610,7 +739,7 @@ const Timekeeping: React.FC = () => {
                                 }
                                 onToggleDay={(day) => toggleDay(idx, day)}
                                 onToggleAllDays={() => toggleAllDays(idx)}
-                                onSaveCard={() => saveCard(idx)}
+                                onSaveCard={() => requestSaveCard(idx)}
                             />
                         ))}
                     </div>
@@ -624,6 +753,50 @@ const Timekeeping: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Modal de confirmação de mês/ano incomum */}
+            {dateConfirmation && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                <AlertTriangle size={22} className="text-amber-600" />
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-800">
+                                Data fora do período esperado
+                            </h3>
+                        </div>
+
+                        <p className="text-sm text-slate-600 mb-2">
+                            O cartão está configurado para salvar em:
+                        </p>
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-center">
+                            <span className="text-xl font-bold text-amber-800">
+                                {MONTH_NAMES[dateConfirmation.month - 1]}/{dateConfirmation.year}
+                            </span>
+                        </div>
+                        <p className="text-sm text-slate-500 mb-6">
+                            Esse período é diferente do mês atual ou anterior. A IA pode ter detectado o mês/ano incorretamente.
+                            Deseja continuar mesmo assim?
+                        </p>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setDateConfirmation(null)}
+                                className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-xl hover:bg-slate-50 transition-colors text-sm"
+                            >
+                                Cancelar e Corrigir
+                            </button>
+                            <button
+                                onClick={handleDateConfirm}
+                                className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl transition-colors text-sm"
+                            >
+                                Salvar mesmo assim
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -644,7 +817,7 @@ interface OcrCardProps {
     onUpdateEntry: (entryIdx: number, field: keyof TimecardEntry, value: string) => void;
     onToggleDay: (day: number) => void;
     onToggleAllDays: () => void;
-    onSaveCard: () => Promise<void>;
+    onSaveCard: () => void | Promise<void>;
 }
 
 const OcrCardComponent: React.FC<OcrCardProps> = ({
@@ -680,6 +853,11 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 
     const confidenceColor = (card.data?.confidence || 0) >= 80 ? 'text-emerald-600' :
         (card.data?.confidence || 0) >= 50 ? 'text-amber-600' : 'text-red-500';
+
+    // Verificar se mês/ano é incomum (fora do mês atual/anterior)
+    const selMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+    const selYear = card.overrideYear || card.data?.year || new Date().getFullYear();
+    const isDateUnusual = card.status === 'success' && !isCurrentOrPreviousMonth(selMonth, selYear);
 
     return (
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
@@ -755,8 +933,9 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 
                 {/* Seletor de Mês/Ano */}
                 {card.status === 'success' && (
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <Calendar size={14} className="text-slate-400" />
+                    <div className={`flex items-center gap-1.5 flex-shrink-0 ${isDateUnusual ? 'ring-2 ring-amber-400 rounded-lg px-1.5 py-0.5 bg-amber-50' : ''}`}>
+                        {isDateUnusual && <AlertTriangle size={14} className="text-amber-500" />}
+                        <Calendar size={14} className={isDateUnusual ? 'text-amber-500' : 'text-slate-400'} />
                         <select
                             value={card.overrideMonth || card.data?.month || new Date().getMonth() + 1}
                             onChange={e => {
@@ -993,3 +1172,4 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 const MONTHS_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
 export default Timekeeping;
+// Date validation v1
