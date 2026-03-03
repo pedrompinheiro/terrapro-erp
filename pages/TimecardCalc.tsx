@@ -602,6 +602,8 @@ const TimecardCalc: React.FC = () => {
                     <td style="text-align:center;font-family:monospace;">${d.punches.saida3 || ''}</td>
                     <td style="text-align:center;font-weight:bold;">${minutesToHHMM(d.workedMinutes)}</td>
                     <td style="text-align:center;">${minutesToHHMM(d.expectedMinutes)}</td>
+                    <td style="text-align:center;color:#059669;">${(() => { const m50 = d.overtimeTiers.filter(t => t.percentage <= 50).reduce((s, t) => s + t.minutes, 0); return m50 > 0 ? minutesToHHMM(m50) : ''; })()}</td>
+                    <td style="text-align:center;color:#2563eb;">${(() => { const m100 = d.overtimeTiers.filter(t => t.percentage > 50).reduce((s, t) => s + t.minutes, 0); return m100 > 0 ? minutesToHHMM(m100) : ''; })()}</td>
                     <td style="text-align:center;color:#059669;font-weight:bold;">${d.overtimeMinutes > 0 ? minutesToHHMM(d.overtimeMinutes) : ''}</td>
                     <td style="text-align:center;color:#dc2626;font-weight:bold;">${d.absenceMinutes > 0 ? minutesToHHMM(d.absenceMinutes) : ''}</td>
                     <td style="text-align:center;color:#4f46e5;">${d.nightMinutes > 0 ? minutesToHHMM(d.nightMinutes) : ''}</td>
@@ -639,6 +641,8 @@ const TimecardCalc: React.FC = () => {
                             <th>Saí.3</th>
                             <th>Trab.</th>
                             <th>Esp.</th>
+                            <th>50%</th>
+                            <th>100%</th>
                             <th>Extra</th>
                             <th>Falta</th>
                             <th>Not.</th>
