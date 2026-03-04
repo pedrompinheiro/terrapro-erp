@@ -4,6 +4,60 @@ import { Activity, AlertCircle, CheckCircle2, Clock, MapPin, DollarSign, Message
 import StatCard from '../components/StatCard';
 import { dashboardService } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+
+// ─── Alertas Críticos dinâmicos ───────────────────────────────
+const DashboardAlerts: React.FC<{ navigate: (path: string) => void }> = ({ navigate }) => {
+  const [alerts, setAlerts] = useState<{ color: string; text: string; route: string }[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const items: { color: string; text: string; route: string }[] = [];
+      // Ordens de manutenção urgentes
+      const { count: osCount } = await supabase
+        .from('maintenance_os')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['URGENT', 'PENDING']);
+      if (osCount && osCount > 0) {
+        items.push({ color: 'orange', text: `${osCount} ordem(s) de manutenção pendente(s).`, route: '/maintenance' });
+      }
+      // Títulos vencidos
+      const hoje = new Date().toISOString().split('T')[0];
+      const { count: titulosCount } = await supabase
+        .from('contas_receber')
+        .select('id', { count: 'exact', head: true })
+        .lt('data_vencimento', hoje)
+        .not('status', 'in', '("RECEBIDO","CANCELADO")');
+      if (titulosCount && titulosCount > 0) {
+        items.push({ color: 'rose', text: `${titulosCount} título(s) a receber em atraso.`, route: '/financial' });
+      }
+      setAlerts(items);
+    };
+    load();
+  }, []);
+
+  if (alerts.length === 0) return (
+    <div className="bg-slate-900 border border-slate-800 rounded-[32px] p-6">
+      <h3 className="text-sm font-black uppercase tracking-widest text-white mb-3">Alertas Críticos</h3>
+      <p className="text-slate-600 text-xs text-center py-2">Nenhum alerta crítico no momento.</p>
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-[32px] p-6 space-y-4">
+      <h3 className="text-sm font-black uppercase tracking-widest text-white">Alertas Críticos</h3>
+      {alerts.map((a, i) => (
+        <div key={i}
+          className={`p-4 bg-${a.color}-600/10 border border-${a.color}-600/20 rounded-2xl flex gap-3 items-start cursor-pointer hover:bg-${a.color}-600/20 transition-colors`}
+          onClick={() => navigate(a.route)}
+        >
+          <AlertCircle size={18} className={`text-${a.color}-500 shrink-0`} />
+          <p className={`text-[10px] text-${a.color}-200/70 font-bold leading-tight uppercase tracking-tight`}>{a.text}</p>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -61,42 +115,29 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard
-          title="Saldo Financeiro"
-          value="R$ 1.25M"
-          trend="+12% (Mês)"
-          trendUp={true}
-          icon={<DollarSign size={24} />}
-          iconBg="bg-blue-600"
-          onClick={() => navigate('/financial')}
-        />
-        <StatCard
-          title="Ativos Monitorados"
-          value="12 / 12"
-          trend="100% Online"
-          trendUp={true}
-          icon={<MapPin size={24} />}
-          iconBg="bg-emerald-600"
-          onClick={() => navigate('/fleet')}
-        />
-        <StatCard
-          title="Alertas Manutenção"
-          value="03 Críticos"
-          trend="Ação Imediata"
-          trendUp={false}
-          icon={<AlertCircle size={24} />}
-          iconBg="bg-rose-600"
-          onClick={() => navigate('/maintenance')}
-        />
-        <StatCard
-          title="Automação WhatsApp"
-          value="Ativo"
-          trend="Ouvindo..."
-          trendUp={true}
-          icon={<MessageSquare size={24} />}
-          iconBg="bg-purple-600"
-          onClick={() => navigate('/whatsapp')}
-        />
+        {stats.length > 0 ? stats.map((s, i) => (
+          <StatCard
+            key={i}
+            title={s.title}
+            value={s.value}
+            trend={s.trend}
+            trendUp={s.trendUp}
+            icon={getIcon(s.type)}
+            iconBg={s.iconBg}
+            onClick={() => s.route && navigate(s.route)}
+          />
+        )) : (
+          // Fallback enquanto carrega
+          [
+            { title: 'Saldo Financeiro', icon: <DollarSign size={24} />, iconBg: 'bg-blue-600', route: '/financial' },
+            { title: 'Ativos Monitorados', icon: <MapPin size={24} />, iconBg: 'bg-emerald-600', route: '/fleet' },
+            { title: 'Alertas Manutenção', icon: <AlertCircle size={24} />, iconBg: 'bg-rose-600', route: '/maintenance' },
+            { title: 'WhatsApp', icon: <MessageSquare size={24} />, iconBg: 'bg-purple-600', route: '/whatsapp' },
+          ].map((s, i) => (
+            <StatCard key={i} title={s.title} value="—" trend="Carregando..." trendUp={true}
+              icon={s.icon} iconBg={s.iconBg} onClick={() => navigate(s.route)} />
+          ))
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -112,14 +153,16 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
           <div className="p-6 space-y-6">
-            {activities.map((item, i) => (
+            {activities.length === 0 ? (
+              <p className="text-slate-600 text-sm text-center py-4">Nenhuma atividade registrada ainda.</p>
+            ) : activities.map((item, i) => (
               <div key={i} className="flex gap-4 items-start">
-                <div className="text-[10px] font-mono text-slate-500 mt-1">{item.time}</div>
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-white">{item.action}</p>
+                <div className="text-[10px] font-mono text-slate-500 mt-1 shrink-0">{item.time}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{item.action}</p>
                   <p className="text-[10px] text-slate-500 font-medium">{item.user} • {item.project}</p>
                 </div>
-                <CheckCircle2 size={16} className="text-[#007a33]" />
+                <CheckCircle2 size={16} className="text-[#007a33] shrink-0" />
               </div>
             ))}
           </div>
@@ -162,22 +205,8 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Critical Alerts */}
-          <div className="bg-slate-900 border border-slate-800 rounded-[32px] p-6 space-y-4">
-            <h3 className="text-sm font-black uppercase tracking-widest text-white">Alertas Críticos</h3>
-            <div className="p-4 bg-orange-600/10 border border-orange-600/20 rounded-2xl flex gap-3 items-start cursor-pointer hover:bg-orange-600/20 transition-colors" onClick={() => navigate('/maintenance')}>
-              <AlertCircle size={18} className="text-orange-500 shrink-0" />
-              <p className="text-[10px] text-orange-200/70 font-bold leading-tight uppercase tracking-tight">
-                03 Ordens de serviço preventivas vencem em 48h.
-              </p>
-            </div>
-            <div className="p-4 bg-rose-600/10 border border-rose-600/20 rounded-2xl flex gap-3 items-start cursor-pointer hover:bg-rose-600/20 transition-colors" onClick={() => navigate('/financial')}>
-              <AlertCircle size={18} className="text-rose-500 shrink-0" />
-              <p className="text-[10px] text-rose-200/70 font-bold leading-tight uppercase tracking-tight">
-                Título #8923 (Prefeitura) em atraso há 45 dias.
-              </p>
-            </div>
-          </div>
+          {/* Critical Alerts — dinâmico */}
+          <DashboardAlerts navigate={navigate} />
         </div>
       </div>
     </div>

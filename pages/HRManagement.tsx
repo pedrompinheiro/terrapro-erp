@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Calendar, Clock, DollarSign, FileText, User, Save, Search, Download, Edit2, AlertCircle, Plus, Minus, Folder, Loader2, Camera, Upload, Trash2, CheckCircle, AlertTriangle, X } from 'lucide-react';
+import { Calendar, Clock, DollarSign, FileText, User, Save, Search, Download, Edit2, AlertCircle, Plus, Minus, Folder, Loader2, Camera, Upload, Trash2, CheckCircle, AlertTriangle, X, Calculator } from 'lucide-react';
 import Modal from '../components/Modal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -34,7 +34,7 @@ interface OCRResult {
     }>;
 }
 import { dashboardService } from '../services/api';
-import { TimeRecord, PayrollEntry } from '../services/mockData';
+import { TimeRecord, PayrollEntry } from '../services/mockData'; // tipos apenas — sem dados mock
 import { ERPDocument } from '../types';
 
 interface Employee {
@@ -1072,6 +1072,52 @@ const HRManagement: React.FC = () => {
         }
     };
 
+    // ─── RECALCULAR PONTOS DO PERÍODO SELECIONADO ───────────
+    const [isRecalculating, setIsRecalculating] = useState(false);
+
+    const handleRecalcAll = async () => {
+        // Recalcula APENAS os registros visíveis na tela (período startDate→endDate)
+        if (timeRecords.length === 0) return;
+        if (!confirm(`Recalcular ${timeRecords.length} registros do período ${startDate} a ${endDate}?`)) return;
+        setIsRecalculating(true);
+
+        try {
+            const updated = timeRecords.map(record => {
+                const t1 = calculateTimeDiff(record.entry1, record.exit1);
+                const t2 = calculateTimeDiff(record.entry2, record.exit2);
+                const totalMinutes = t1 + t2;
+                return { ...record, totalHours: formatMinutesToHHMM(totalMinutes) };
+            });
+
+            // Salvar em batch (apenas o período carregado na tela)
+            let savedCount = 0;
+            for (const rec of updated) {
+                if (!selectedEmployee) continue;
+                const { error } = await supabase
+                    .from('time_entries')
+                    .upsert({
+                        employee_id: selectedEmployee,
+                        date: rec.date,
+                        entry1: rec.entry1 || null,
+                        exit1: rec.exit1 || null,
+                        entry2: rec.entry2 || null,
+                        exit2: rec.exit2 || null,
+                        total_hours: rec.totalHours,
+                        status: 'RECALCULADO'
+                    }, { onConflict: 'employee_id,date' as any });
+                if (!error) savedCount++;
+            }
+
+            setTimeRecords(updated);
+            alert(`${savedCount} registros recalculados e salvos!`);
+        } catch (err) {
+            console.error('Erro ao recalcular:', err);
+            alert('Erro ao recalcular pontos.');
+        } finally {
+            setIsRecalculating(false);
+        }
+    };
+
     const handleExportPDF = () => {
         const emp = employees.find(e => e.id === selectedEmployee);
         if (!emp) return;
@@ -1368,6 +1414,14 @@ const HRManagement: React.FC = () => {
                                                 )}
                                             </button>
                                         </div>
+
+                                        <div className="h-4 w-px bg-slate-800"></div>
+
+                                        <button onClick={handleRecalcAll} disabled={isRecalculating || timeRecords.length === 0}
+                                            title={`Recalcula as horas de ${timeRecords.length} registros do período selecionado`}
+                                            className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-amber-900/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                                            {isRecalculating ? <Loader2 size={14} className="animate-spin" /> : <Calculator size={14} />} Recalcular Período
+                                        </button>
 
                                         <div className="h-4 w-px bg-slate-800"></div>
 
