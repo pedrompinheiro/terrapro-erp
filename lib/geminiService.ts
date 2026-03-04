@@ -1,19 +1,14 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const getAI = () => new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
+import { generateText, getProviderLabel } from "./aiService";
 
 export const analyzeFleetEfficiency = async (data: any) => {
-  const ai = getAI();
   try {
-    const model = ai.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: "Você é um especialista sênior em logística de frotas pesadas e terraplanagem. Seja conciso e técnico."
-    });
-
-    const result = await model.generateContent(`Analise os seguintes dados de frota de terraplanagem e forneça 3 insights rápidos e recomendações estratégicas: ${JSON.stringify(data)}`);
-    return result.response.text();
+    const result = await generateText(
+      `Analise os seguintes dados de frota de terraplanagem e forneça 3 insights rápidos e recomendações estratégicas: ${JSON.stringify(data)}`,
+      "Você é um especialista sênior em logística de frotas pesadas e terraplanagem. Seja conciso e técnico."
+    );
+    return result;
   } catch (error) {
-    console.error("AI Analysis Error:", error);
+    console.error(`AI Analysis Error (${await getProviderLabel()}):`, error);
     return "Não foi possível gerar a análise no momento.";
   }
 };

@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, FileText, Filter, ChevronLeft, ChevronRight, X,
   DollarSign, User, Truck, Wrench, Calendar, Phone,
-  CheckCircle, XCircle, AlertTriangle, Clock,
+  CheckCircle, XCircle, AlertTriangle, Clock, Plus, Pencil, Printer,
 } from 'lucide-react';
 import { ServiceOrder, ServiceOrderItem, ServiceOrderStatus } from '../../types';
 import { inventoryService } from '../../services/inventoryService';
 import Modal from '../Modal';
+import ServiceOrderFormModal from './ServiceOrderFormModal';
+import showToast from '../../lib/toast';
 
 interface OrdensServicoTabProps {
   onRefresh?: () => void;
@@ -41,6 +43,8 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
   const [detailModal, setDetailModal] = useState<ServiceOrder | null>(null);
   const [detailItems, setDetailItems] = useState<ServiceOrderItem[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [formModal, setFormModal] = useState<{ open: boolean; order?: ServiceOrder | null }>({ open: false });
+  const [printOS, setPrintOS] = useState<{ order: ServiceOrder; items: ServiceOrderItem[] } | null>(null);
 
   // Load statuses and stats on mount
   useEffect(() => {
@@ -92,6 +96,58 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
     }
   };
 
+  const reloadAll = async () => {
+    await Promise.all([loadOrders(), inventoryService.getServiceOrderStats().then(setStats)]);
+  };
+
+  const handleQuickStatusChange = async (orderId: string, newSituation: string) => {
+    try {
+      const st = statuses.find(s => s.name === newSituation);
+      await inventoryService.updateServiceOrderStatus(orderId, newSituation, st?.code);
+      showToast.success(`Situacao alterada para "${newSituation}"`);
+      setDetailModal(null);
+      reloadAll();
+    } catch (err: any) {
+      showToast.error('Erro: ' + (err.message || 'Falha ao atualizar situacao'));
+    }
+  };
+
+  const handlePrintOS = async (order: ServiceOrder) => {
+    const items = await inventoryService.getServiceOrderItems(order.id);
+    setPrintOS({ order, items });
+    // Open print in new window
+    setTimeout(() => {
+      const el = document.getElementById('os-print-area');
+      if (el) {
+        const win = window.open('', '_blank', 'width=800,height=600');
+        if (win) {
+          win.document.write(`<html><head><title>OS #${order.order_number}</title>
+            <style>
+              body{font-family:Arial,sans-serif;color:#333;padding:20px;font-size:12px}
+              table{width:100%;border-collapse:collapse;margin:10px 0}
+              th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+              th{background:#f5f5f5;font-size:10px;text-transform:uppercase}
+              .header{text-align:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:15px}
+              .section{margin:12px 0}
+              .section-title{font-weight:bold;font-size:11px;text-transform:uppercase;border-bottom:1px solid #ccc;padding-bottom:4px;margin-bottom:8px}
+              .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+              .total-row{font-weight:bold;font-size:14px}
+              .signatures{display:flex;justify-content:space-around;margin-top:60px}
+              .sig-line{text-align:center;width:200px}
+              .sig-line hr{margin-bottom:5px}
+              @media print{body{padding:10px}}
+            </style></head><body>${el.innerHTML}</body></html>`);
+          win.document.close();
+          win.print();
+        }
+      }
+      setPrintOS(null);
+    }, 100);
+  };
+
+  const isOrderFinal = (situation?: string) =>
+    ['FINALIZADA', 'FECHAMENTO', 'CANCELADO'].includes(situation || '');
+
   const getStatusColor = (situationName?: string): string => {
     const match = statuses.find(s => s.name === situationName);
     return match?.color || '#64748b';
@@ -113,8 +169,9 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Stats Cards + Nova OS */}
+      <div className="flex items-start gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-center gap-4">
           <div className="p-3 rounded-xl bg-blue-500/10">
             <FileText size={22} className="text-blue-400" />
@@ -144,6 +201,14 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
             <p className="text-2xl font-black text-white">{formatCurrency(stats.totalRevenue)}</p>
           </div>
         </div>
+      </div>
+      <button
+        onClick={() => setFormModal({ open: true, order: null })}
+        className="flex items-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-2xl shadow-lg shadow-blue-900/20 transition-all active:scale-95 whitespace-nowrap h-fit mt-1"
+      >
+        <Plus size={16} />
+        Nova OS
+      </button>
       </div>
 
       {/* Filter Bar */}
@@ -304,19 +369,43 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
       >
         {detailModal && (
           <div className="space-y-5">
-            {/* Header badge */}
-            <div className="flex items-center gap-3">
-              <StatusBadge situation={detailModal.situation} />
-              {detailModal.is_order ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-500/15 text-blue-400">Ordem de Servico</span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-500/15 text-purple-400">Orcamento</span>
-              )}
-              {detailModal.is_paid ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-400">Pago</span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-500/15 text-red-400">Pendente</span>
-              )}
+            {/* Header badges + actions */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <StatusBadge situation={detailModal.situation} />
+                {detailModal.is_order ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-500/15 text-blue-400">Ordem de Servico</span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-500/15 text-purple-400">Orcamento</span>
+                )}
+                {detailModal.is_paid ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/15 text-emerald-400">Pago</span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-500/15 text-red-400">Pendente</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setDetailModal(null); setFormModal({ open: true, order: detailModal }); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95">
+                  <Pencil size={12} /> Editar
+                </button>
+                <button onClick={() => handlePrintOS(detailModal)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold rounded-lg transition-all">
+                  <Printer size={12} /> Imprimir
+                </button>
+                {!isOrderFinal(detailModal.situation) && (
+                  <select
+                    onChange={e => e.target.value && handleQuickStatusChange(detailModal.id, e.target.value)}
+                    value=""
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-white font-bold outline-none focus:border-blue-500"
+                  >
+                    <option value="" disabled>Alterar Situacao...</option>
+                    {statuses.filter(s => s.active).map(s => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
             </div>
 
             {/* Two column grid */}
@@ -551,6 +640,135 @@ export default function OrdensServicoTab({ onRefresh }: OrdensServicoTabProps) {
           </div>
         )}
       </Modal>
+
+      {/* Form Modal (Create/Edit) */}
+      <ServiceOrderFormModal
+        isOpen={formModal.open}
+        onClose={() => setFormModal({ open: false })}
+        onSaved={reloadAll}
+        editOrder={formModal.order}
+        statuses={statuses}
+      />
+
+      {/* Hidden print area */}
+      {printOS && (
+        <div id="os-print-area" className="hidden">
+          <div className="header">
+            <h1 style={{ margin: 0, fontSize: '18px' }}>Transportadora e Terraplanagem Terra LTDA</h1>
+            <p style={{ margin: '4px 0', fontSize: '11px', color: '#666' }}>Dourados/MS</p>
+            <h2 style={{ margin: '8px 0 0', fontSize: '16px' }}>
+              ORDEM DE SERVICO N. {printOS.order.order_number}
+            </h2>
+            <p style={{ fontSize: '11px', color: '#666' }}>
+              {printOS.order.is_quote ? 'ORCAMENTO' : printOS.order.is_call ? 'CHAMADO' : 'OS'} | Situacao: {printOS.order.situation || '-'}
+            </p>
+          </div>
+
+          <div className="section">
+            <div className="section-title">Datas</div>
+            <div className="grid">
+              <p>Entrada: {formatDate(printOS.order.entry_date)} {printOS.order.entry_time || ''}</p>
+              <p>Saida: {formatDate(printOS.order.exit_date)} {printOS.order.exit_time || ''}</p>
+            </div>
+          </div>
+
+          <div className="section">
+            <div className="section-title">Cliente</div>
+            <p><strong>{printOS.order.client_name || '-'}</strong></p>
+            <div className="grid">
+              <p>Contato: {printOS.order.client_contact || '-'}</p>
+              <p>Telefone: {printOS.order.client_phone || '-'} | WhatsApp: {printOS.order.client_whatsapp || '-'}</p>
+            </div>
+          </div>
+
+          <div className="section">
+            <div className="section-title">Equipamento</div>
+            <div className="grid">
+              <p>Nome: {printOS.order.equipment_name || '-'}</p>
+              <p>Modelo: {printOS.order.model_name || '-'} | Marca: {printOS.order.brand_name || '-'}</p>
+              <p>Placa: {printOS.order.plate || '-'} | KM: {printOS.order.km || '-'}</p>
+              <p>Ano: {printOS.order.year_fab || '-'} | Serial: {printOS.order.serial_number || '-'}</p>
+            </div>
+          </div>
+
+          {(printOS.order.defect_1 || printOS.order.defect_2 || printOS.order.defect_memo) && (
+            <div className="section">
+              <div className="section-title">Defeitos</div>
+              {printOS.order.defect_1 && <p>{printOS.order.defect_1}</p>}
+              {printOS.order.defect_2 && <p>{printOS.order.defect_2}</p>}
+              {printOS.order.defect_memo && <p style={{ whiteSpace: 'pre-wrap' }}>{printOS.order.defect_memo}</p>}
+            </div>
+          )}
+
+          {(printOS.order.service_1 || printOS.order.service_memo) && (
+            <div className="section">
+              <div className="section-title">Servicos Realizados</div>
+              <ul>
+                {[printOS.order.service_1, printOS.order.service_2, printOS.order.service_3, printOS.order.service_4, printOS.order.service_5]
+                  .filter(Boolean).map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+              {printOS.order.service_memo && <p style={{ whiteSpace: 'pre-wrap', marginTop: '8px' }}>{printOS.order.service_memo}</p>}
+            </div>
+          )}
+
+          {printOS.items.length > 0 && (
+            <div className="section">
+              <div className="section-title">Itens</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th><th>Descricao</th><th>Tipo</th><th style={{ textAlign: 'right' }}>Qtd</th>
+                    <th style={{ textAlign: 'right' }}>Unitario</th><th style={{ textAlign: 'right' }}>Total</th><th>Tecnico</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printOS.items.map((item, i) => (
+                    <tr key={item.id}>
+                      <td>{i + 1}</td>
+                      <td>{item.description}</td>
+                      <td>{item.is_product ? 'Peca' : 'Servico'}</td>
+                      <td style={{ textAlign: 'right' }}>{item.quantity}</td>
+                      <td style={{ textAlign: 'right' }}>{formatCurrency(item.unit_price)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatCurrency(item.total)}</td>
+                      <td>{item.technician_name || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="section">
+            <div className="section-title">Resumo Financeiro</div>
+            <table>
+              <tbody>
+                <tr><td>Produtos</td><td style={{ textAlign: 'right' }}>{formatCurrency(printOS.order.products_value)}</td></tr>
+                <tr><td>Servicos</td><td style={{ textAlign: 'right' }}>{formatCurrency(printOS.order.services_value)}</td></tr>
+                <tr><td>Mao de Obra</td><td style={{ textAlign: 'right' }}>{formatCurrency(printOS.order.labor_value)}</td></tr>
+                {printOS.order.displacement_value > 0 && <tr><td>Deslocamento</td><td style={{ textAlign: 'right' }}>{formatCurrency(printOS.order.displacement_value)}</td></tr>}
+                {printOS.order.discount_value > 0 && <tr><td style={{ color: 'red' }}>Desconto</td><td style={{ textAlign: 'right', color: 'red' }}>-{formatCurrency(printOS.order.discount_value)}</td></tr>}
+                <tr className="total-row"><td><strong>TOTAL</strong></td><td style={{ textAlign: 'right' }}><strong>{formatCurrency(printOS.order.total_value)}</strong></td></tr>
+              </tbody>
+            </table>
+            <p style={{ marginTop: '8px' }}>
+              Pagamento: {printOS.order.payment_form || '-'} | Condicao: {printOS.order.payment_conditions || '-'} | Status: {printOS.order.is_paid ? 'PAGO' : 'PENDENTE'}
+            </p>
+          </div>
+
+          {(printOS.order.observations || printOS.order.general_notes_memo) && (
+            <div className="section">
+              <div className="section-title">Observacoes</div>
+              {printOS.order.observations && <p style={{ whiteSpace: 'pre-wrap' }}>{printOS.order.observations}</p>}
+              {printOS.order.general_notes_memo && <p style={{ whiteSpace: 'pre-wrap' }}>{printOS.order.general_notes_memo}</p>}
+            </div>
+          )}
+
+          <div className="signatures">
+            <div className="sig-line"><hr /><p>Cliente</p></div>
+            <div className="sig-line"><hr /><p>Tecnico: {printOS.order.technician_name || '_______________'}</p></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -31,5 +31,8 @@ backups/
 *.rar
 .claude/
 
+# Supabase CLI temp files
+supabase/.temp/
+
 # Backup OS Oficina (arquivos DBF/binários pesados)
 BACKUP_OSOFICINA7.2_000009/

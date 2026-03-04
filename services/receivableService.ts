@@ -51,6 +51,7 @@ export interface ContaReceber {
     updated_by?: string;
     canceled_by?: string;
     motivo_cancelamento?: string;
+    filial_id?: string;
 }
 
 class ReceivableService {
@@ -63,6 +64,7 @@ class ReceivableService {
         vencidas?: boolean;
         inadimplentes?: boolean;
         recorrentes?: boolean;
+        filial_id?: string;
     }) {
         let query = supabase
             .from('contas_receber')
@@ -73,6 +75,10 @@ class ReceivableService {
         centro_custo:centros_custo(codigo, nome)
       `)
             .order('data_vencimento', { ascending: false });
+
+        if (filtros?.filial_id) {
+            query = query.eq('filial_id', filtros.filial_id);
+        }
 
         if (filtros?.cliente_id) {
             query = query.eq('cliente_id', filtros.cliente_id);
@@ -126,6 +132,21 @@ class ReceivableService {
         const { data, error } = await supabase
             .from('contas_receber')
             .insert(conta)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
+     * Atualizar conta a receber existente
+     */
+    async atualizar(id: string, dados: Partial<ContaReceber>) {
+        const { data, error } = await supabase
+            .from('contas_receber')
+            .update(dados)
+            .eq('id', id)
             .select()
             .single();
 
@@ -549,8 +570,15 @@ Equipe Financeira
     }
 
     private async enviarWhatsApp(telefone: string, mensagem: string, anexo?: string) {
-        // TODO: Integrar com Evolution API
-        console.log('WhatsApp enviado para:', telefone);
+        const { evolutionService } = await import('./evolutionService');
+
+        // Envia texto da cobranca
+        await evolutionService.sendText(telefone, mensagem);
+
+        // Se tiver anexo (boleto PDF como URL ou base64), envia como documento
+        if (anexo) {
+            await evolutionService.sendMedia(telefone, anexo, 'Boleto em anexo', 'document', 'boleto.pdf');
+        }
     }
 }
 

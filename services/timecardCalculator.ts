@@ -80,6 +80,7 @@ export interface TimeEntry {
     is_compensated: boolean;
     is_off_day: boolean;
     justification: string | null;
+    justification2: string | null;
     work_shift_id: string | null;
 }
 
@@ -112,6 +113,10 @@ export interface DayCalculation {
     hasAbsence: boolean;
     isComplete: boolean;
     isMissing: boolean; // Dia sem nenhuma batida
+
+    // Justificativa por período
+    justification: string | null;   // Período 1 (Ent.1/Saí.1)
+    justification2: string | null;  // Período 2 (Ent.2/Saí.2)
 }
 
 export interface MonthCalculation {
@@ -162,6 +167,14 @@ export interface MonthCalculation {
 
     // Saldo
     balance: number; // Positivo = extra, negativo = falta
+}
+
+export interface AbsenceJustificationType {
+    id: string;
+    code: string;
+    name: string;
+    excuses_absence: boolean;
+    affects_dsr: boolean;
 }
 
 // ============================================================
@@ -441,7 +454,8 @@ export const calculateDay = (
     entry: TimeEntry | undefined,
     shift: WorkShift,
     rules: OvertimeRule[],
-    holidays: Map<string, string>
+    holidays: Map<string, string>,
+    justificationTypes?: AbsenceJustificationType[]
 ): DayCalculation => {
     const dow = date.getDay();
     const dateStr = date.toISOString().split('T')[0];
@@ -454,8 +468,21 @@ export const calculateDay = (
         expected.entrada3, expected.saida3
     ) : 0;
 
+    // Verificar se o dia tem justificativa que abona a falta
+    const entryJustification = entry?.justification || null;
+    const entryJustification2 = entry?.justification2 || null;
+    const justType = entryJustification && justificationTypes
+        ? justificationTypes.find(j => j.code === entryJustification)
+        : null;
+    const isExcused = justType?.excuses_absence === true;
+    const justAffectsDsr = justType?.affects_dsr === true;
+
     // Se não tem entry para este dia
     if (!entry || (!entry.entry_time && !entry.break_end)) {
+        const rawAbsence = (dayType === 'weekday' || dayType === 'saturday') && expected ? expectedMin : 0;
+        const rawHasAbsence = dayType === 'weekday' && expected !== null;
+        const rawIsMissing = dayType === 'weekday' || (dayType === 'saturday' && expected !== null);
+
         return {
             date: dateStr,
             dayOfWeek: dow,
@@ -466,26 +493,28 @@ export const calculateDay = (
             expected,
             workedMinutes: 0,
             expectedMinutes: expectedMin,
-            normalMinutes: 0,
+            normalMinutes: isExcused ? expectedMin : 0,
             overtimeMinutes: 0,
-            absenceMinutes: (dayType === 'weekday' || dayType === 'saturday') && expected ? expectedMin : 0,
+            absenceMinutes: isExcused ? 0 : rawAbsence,
             nightMinutes: 0,
             nightReducedMinutes: 0,
             overtimeTiers: [],
-            hasAbsence: dayType === 'weekday' && expected !== null,
+            hasAbsence: isExcused ? justAffectsDsr : rawHasAbsence,
             isComplete: false,
-            isMissing: dayType === 'weekday' || (dayType === 'saturday' && expected !== null),
+            isMissing: isExcused ? false : rawIsMissing,
+            justification: entryJustification,
+            justification2: entryJustification2,
         };
     }
 
-    // Batidas reais
+    // Batidas reais (DB retorna TIME como "HH:MM:SS", cortar pra "HH:MM")
     const punches = {
-        entrada1: entry.entry_time || '',
-        saida1: entry.break_start || '',
-        entrada2: entry.break_end || '',
-        saida2: entry.exit_time || '',
-        entrada3: entry.entry_time2 || undefined,
-        saida3: entry.break_start2 || undefined,
+        entrada1: (entry.entry_time || '').slice(0, 5),
+        saida1: (entry.break_start || '').slice(0, 5),
+        entrada2: (entry.break_end || '').slice(0, 5),
+        saida2: (entry.exit_time || '').slice(0, 5),
+        entrada3: entry.entry_time2 ? entry.entry_time2.slice(0, 5) : undefined,
+        saida3: entry.break_start2 ? entry.break_start2.slice(0, 5) : undefined,
     };
 
     // Horas trabalhadas
@@ -556,6 +585,23 @@ export const calculateDay = (
         ? distributeOvertime(overtimeMin, dayType, rules)
         : [];
 
+    // Aplicar justificativa de abono
+    let finalAbsenceMin = absenceMin;
+    let finalHasAbsence = absenceMin > 0;
+    let finalIsMissing = workedMin === 0 && expectedMin > 0;
+    let finalNormalMin = normalMin;
+
+    if (isExcused && absenceMin > 0) {
+        finalAbsenceMin = 0;
+        finalHasAbsence = justAffectsDsr; // só marca falta para DSR se affects_dsr
+        finalNormalMin = expectedMin; // considera como se tivesse trabalhado o esperado
+    }
+    if (isExcused && finalIsMissing) {
+        finalIsMissing = false;
+        finalHasAbsence = justAffectsDsr;
+        finalNormalMin = expectedMin;
+    }
+
     return {
         date: dateStr,
         dayOfWeek: dow,
@@ -566,15 +612,17 @@ export const calculateDay = (
         expected,
         workedMinutes: workedMin,
         expectedMinutes: expectedMin,
-        normalMinutes: normalMin,
+        normalMinutes: finalNormalMin,
         overtimeMinutes: overtimeMin,
-        absenceMinutes: absenceMin,
+        absenceMinutes: finalAbsenceMin,
         nightMinutes: nightMin,
         nightReducedMinutes: nightReduced,
         overtimeTiers,
-        hasAbsence: absenceMin > 0,
+        hasAbsence: finalHasAbsence,
         isComplete: workedMin > 0 && !!(punches.entrada1 && punches.saida1),
-        isMissing: workedMin === 0 && expectedMin > 0,
+        isMissing: finalIsMissing,
+        justification: entryJustification,
+        justification2: entryJustification2,
     };
 };
 
@@ -650,6 +698,13 @@ export const calculateMonth = async (
     // 2. Buscar feriados
     const holidays = await fetchHolidays(year, month);
 
+    // 2b. Buscar tipos de justificativa
+    const { data: justTypesData } = await supabase
+        .from('absence_justifications')
+        .select('id, code, name, excuses_absence, affects_dsr')
+        .eq('active', true);
+    const justificationTypes: AbsenceJustificationType[] = justTypesData || [];
+
     // 3. Buscar batidas do mês
     const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = new Date(year, month, 0).getDate();
@@ -672,7 +727,7 @@ export const calculateMonth = async (
         const date = new Date(year, month - 1, d);
         const dateStr = date.toISOString().split('T')[0];
         const entry = entryMap.get(dateStr);
-        const dayCalc = calculateDay(date, entry, shift, rules, holidays);
+        const dayCalc = calculateDay(date, entry, shift, rules, holidays, justificationTypes);
         days.push(dayCalc);
     }
 
