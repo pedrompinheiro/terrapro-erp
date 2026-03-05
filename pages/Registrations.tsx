@@ -366,7 +366,15 @@ const Registrations: React.FC = () => {
     const getFilteredEntities = (role: 'CLIENT' | 'SUPPLIER') => {
         return entities.filter(e => {
             const matchesRole = role === 'CLIENT' ? e.is_client : e.is_supplier;
-            const matchesSearch = (e.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || (e.document || '').includes(searchTerm);
+            const term = searchTerm.toLowerCase().replace(/[.\-\/]/g, '');
+            const docClean = (e.document || '').replace(/[.\-\/]/g, '');
+            const matchesSearch = !searchTerm ||
+                (e.name || '').toLowerCase().includes(term) ||
+                (e.social_reason || '').toLowerCase().includes(term) ||
+                docClean.includes(term) ||
+                (e.email || '').toLowerCase().includes(term) ||
+                (e.phone || '').includes(searchTerm) ||
+                (e.city || '').toLowerCase().includes(term);
             return matchesRole && matchesSearch;
         });
     };
