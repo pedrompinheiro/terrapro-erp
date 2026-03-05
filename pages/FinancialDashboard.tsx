@@ -21,6 +21,7 @@ export interface UnifiedTransaction {
   costCenterId?: string;
   costCenterGroup?: string;
   costCenterName?: string;
+  rateioCount?: number;
 }
 
 interface Props {
@@ -230,11 +231,16 @@ const FinancialDashboard: React.FC<Props> = ({
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <div className="font-bold text-white mb-0.5">{tr.description}</div>
-                        {tr.costCenterName && (
+                        {tr.rateioCount && tr.rateioCount > 0 ? (
+                          <span className="text-[9px] w-fit px-1.5 py-0.5 bg-purple-500/20 rounded text-purple-400 border border-purple-500/30 mb-1 flex items-center gap-1">
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 010 20M12 2v20M2 12h20"/></svg>
+                            Rateio ({tr.rateioCount} CCs)
+                          </span>
+                        ) : tr.costCenterName ? (
                           <span className="text-[9px] w-fit px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 border border-slate-700 truncate max-w-[150px] mb-1">
                             {tr.costCenterName}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="text-xs text-slate-500 flex items-center gap-1">
                         {tr.type === 'INCOME' ? <ArrowUpRight size={10} className="text-emerald-500" /> : <ArrowDownLeft size={10} className="text-rose-500" />}

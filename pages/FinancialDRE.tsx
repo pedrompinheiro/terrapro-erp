@@ -121,7 +121,7 @@ const FinancialDRE: React.FC<Props> = ({ isOpen, onClose }) => {
       // Buscar receitas
       const { data: recebiveis } = await supabase
         .from('contas_receber')
-        .select('valor_original, centro_custo_id, centros_custo:centros_custo(nome, grupo_dre)')
+        .select('id, valor_original, centro_custo_id, centros_custo:centros_custo(nome, grupo_dre)')
         .gte('data_vencimento', startDate)
         .lte('data_vencimento', endDate)
         .neq('status', 'CANCELADO');
@@ -129,10 +129,41 @@ const FinancialDRE: React.FC<Props> = ({ isOpen, onClose }) => {
       // Buscar despesas
       const { data: pagaveis } = await supabase
         .from('contas_pagar')
-        .select('valor_original, centro_custo_id, centros_custo:centros_custo(nome, grupo_dre)')
+        .select('id, valor_original, centro_custo_id, centros_custo:centros_custo(nome, grupo_dre)')
         .gte('data_vencimento', startDate)
         .lte('data_vencimento', endDate)
         .neq('status', 'CANCELADO');
+
+      // Buscar rateios do período (para contas que têm rateio ao invés de CC direto)
+      const allIds = [
+        ...(recebiveis || []).map(r => r.id),
+        ...(pagaveis || []).map(p => p.id),
+      ].filter(Boolean);
+
+      let rateioMap: Record<string, { centro_nome: string; grupo_dre: string; valor: number }[]> = {};
+      if (allIds.length > 0) {
+        const { data: rateios } = await supabase
+          .from('rateio_centro_custo')
+          .select('lancamento_id, valor, centros_custo:centros_custo(nome, grupo_dre)')
+          .in('lancamento_id', allIds);
+        if (rateios) {
+          for (const rat of rateios as any[]) {
+            if (!rateioMap[rat.lancamento_id]) rateioMap[rat.lancamento_id] = [];
+            rateioMap[rat.lancamento_id].push({
+              centro_nome: rat.centros_custo?.nome || 'Outros',
+              grupo_dre: rat.centros_custo?.grupo_dre || '',
+              valor: rat.valor,
+            });
+          }
+        }
+      }
+
+      // Helper: acumular valor em array de {nome, valor}
+      const acumular = (arr: { nome: string; valor: number }[], nome: string, valor: number) => {
+        const existing = arr.find(x => x.nome === nome);
+        if (existing) existing.valor += valor;
+        else arr.push({ nome, valor });
+      };
 
       let receitaBruta = 0;
       let custosDiretos = 0;
@@ -142,29 +173,50 @@ const FinancialDRE: React.FC<Props> = ({ isOpen, onClose }) => {
       const despesas: { nome: string; valor: number }[] = [];
 
       (recebiveis || []).forEach((r: any) => {
-        const grupo = r.centros_custo?.grupo_dre || '';
-        const nome = r.centros_custo?.nome || 'Outros';
-        if (grupo.includes('Receita')) {
-          receitaBruta += r.valor_original;
-          const existing = receitas.find(x => x.nome === nome);
-          if (existing) existing.valor += r.valor_original;
-          else receitas.push({ nome, valor: r.valor_original });
+        const rateioEntries = rateioMap[r.id];
+        if (rateioEntries && rateioEntries.length > 0) {
+          // Tem rateio — distribuir valor pelos centros
+          for (const rat of rateioEntries) {
+            if (rat.grupo_dre.includes('Receita')) {
+              receitaBruta += rat.valor;
+              acumular(receitas, rat.centro_nome, rat.valor);
+            }
+          }
+        } else {
+          // Sem rateio — usar CC direto
+          const grupo = r.centros_custo?.grupo_dre || '';
+          const nome = r.centros_custo?.nome || 'Outros';
+          if (grupo.includes('Receita')) {
+            receitaBruta += r.valor_original;
+            acumular(receitas, nome, r.valor_original);
+          }
         }
       });
 
       (pagaveis || []).forEach((p: any) => {
-        const grupo = p.centros_custo?.grupo_dre || '';
-        const nome = p.centros_custo?.nome || 'Outros';
-        if (grupo.includes('Custos Diretos') || grupo.includes('CPV')) {
-          custosDiretos += p.valor_original;
-          const existing = custos.find(x => x.nome === nome);
-          if (existing) existing.valor += p.valor_original;
-          else custos.push({ nome, valor: p.valor_original });
+        const rateioEntries = rateioMap[p.id];
+        if (rateioEntries && rateioEntries.length > 0) {
+          // Tem rateio — distribuir valor pelos centros
+          for (const rat of rateioEntries) {
+            if (rat.grupo_dre.includes('Custos Diretos') || rat.grupo_dre.includes('CPV')) {
+              custosDiretos += rat.valor;
+              acumular(custos, rat.centro_nome, rat.valor);
+            } else {
+              despesasFixas += rat.valor;
+              acumular(despesas, rat.centro_nome, rat.valor);
+            }
+          }
         } else {
-          despesasFixas += p.valor_original;
-          const existing = despesas.find(x => x.nome === nome);
-          if (existing) existing.valor += p.valor_original;
-          else despesas.push({ nome, valor: p.valor_original });
+          // Sem rateio — usar CC direto
+          const grupo = p.centros_custo?.grupo_dre || '';
+          const nome = p.centros_custo?.nome || 'Outros';
+          if (grupo.includes('Custos Diretos') || grupo.includes('CPV')) {
+            custosDiretos += p.valor_original;
+            acumular(custos, nome, p.valor_original);
+          } else {
+            despesasFixas += p.valor_original;
+            acumular(despesas, nome, p.valor_original);
+          }
         }
       });
 

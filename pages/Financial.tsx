@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Save, Calculator, CheckCircle, Lock, Unlock, Settings, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import Modal from '../components/Modal';
+import TransactionFormModal from '../components/TransactionFormModal';
 
 import { receivableService, ContaReceber } from '../services/receivableService';
 import { paymentService, ContaPagar } from '../services/paymentService';
@@ -22,6 +23,7 @@ const Financial: React.FC = () => {
 
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newTransactionType, setNewTransactionType] = useState<'PAGAR' | 'RECEBER'>('PAGAR');
   const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [isDREModalOpen, setIsDREModalOpen] = useState(false);
@@ -80,6 +82,25 @@ const Financial: React.FC = () => {
       const unified: UnifiedTransaction[] = [];
       const today = new Date().toISOString().split('T')[0];
 
+      // Buscar rateios para todas as contas (contas sem centro_custo_id podem ter rateio)
+      const allRecIds = (recebiveis || []).map((r: any) => r.id).filter(Boolean);
+      const allPagIds = (pagaveis || []).map((p: any) => p.id).filter(Boolean);
+      const allIds = [...allRecIds, ...allPagIds];
+
+      let rateioCountMap: Record<string, number> = {};
+      if (allIds.length > 0) {
+        // Buscar contagem de rateios por lancamento em batch
+        const { data: rateios } = await supabase
+          .from('rateio_centro_custo')
+          .select('lancamento_id')
+          .in('lancamento_id', allIds);
+        if (rateios) {
+          for (const r of rateios) {
+            rateioCountMap[r.lancamento_id] = (rateioCountMap[r.lancamento_id] || 0) + 1;
+          }
+        }
+      }
+
       (recebiveis || []).forEach((r: any) => {
         const isOverdue = r.data_vencimento < today && r.status !== 'RECEBIDO' && r.status !== 'CANCELADO';
         unified.push({
@@ -96,6 +117,7 @@ const Financial: React.FC = () => {
           costCenterId: r.centro_custo_id,
           costCenterGroup: r.centro_custo?.grupo_dre,
           costCenterName: r.centro_custo?.nome,
+          rateioCount: rateioCountMap[r.id] || 0,
         });
       });
 
@@ -115,6 +137,7 @@ const Financial: React.FC = () => {
           costCenterId: p.centro_custo_id,
           costCenterGroup: p.centro_custo?.grupo_dre,
           costCenterName: p.centro_custo?.nome,
+          rateioCount: rateioCountMap[p.id] || 0,
         });
       });
 
@@ -449,12 +472,20 @@ const Financial: React.FC = () => {
           >
             DRE
           </button>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg transition flex items-center gap-2"
-          >
-            <Plus size={18} /> Novo Lancamento
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => { setNewTransactionType('RECEBER'); setIsModalOpen(true); }}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-l-xl font-bold text-sm shadow-lg transition flex items-center gap-1"
+            >
+              <ArrowUpRight size={16} /> A Receber
+            </button>
+            <button
+              onClick={() => { setNewTransactionType('PAGAR'); setIsModalOpen(true); }}
+              className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-r-xl font-bold text-sm shadow-lg transition flex items-center gap-1"
+            >
+              <ArrowDownLeft size={16} /> A Pagar
+            </button>
+          </div>
         </div>
       </div>
 
@@ -469,7 +500,7 @@ const Financial: React.FC = () => {
         onTransactionClick={handleTransactionClick}
         onDelete={handleDelete}
         onDeleteBank={handleDeleteBank}
-        onOpenNewTransaction={() => setIsModalOpen(true)}
+        onOpenNewTransaction={() => { setNewTransactionType('PAGAR'); setIsModalOpen(true); }}
         onOpenBankModal={() => setIsBankModalOpen(true)}
         onOpenDRE={() => setIsDREModalOpen(true)}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
@@ -507,105 +538,13 @@ const Financial: React.FC = () => {
         onRefresh={loadBankAccounts}
       />
 
-      {/* ====== NOVO LANCAMENTO MODAL ====== */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Novo Lancamento Financeiro">
-        <div className="space-y-4">
-          {/* Tipo */}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'INCOME' }))}
-              className={`p-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 border transition ${newTransaction.type === 'INCOME'
-                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-            >
-              <ArrowUpRight size={18} /> A Receber
-            </button>
-            <button
-              onClick={() => setNewTransaction(prev => ({ ...prev, type: 'EXPENSE' }))}
-              className={`p-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 border transition ${newTransaction.type === 'EXPENSE'
-                ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                }`}
-            >
-              <ArrowDownLeft size={18} /> A Pagar
-            </button>
-          </div>
-
-          {/* Descricao */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Descricao</label>
-            <input
-              value={newTransaction.description}
-              onChange={e => setNewTransaction(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="Ex: Aluguel, Servico de terraplanagem..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
-            />
-          </div>
-
-          {/* Entidade */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">
-              {newTransaction.type === 'INCOME' ? 'Cliente' : 'Fornecedor'}
-            </label>
-            <select
-              value={newTransaction.entityId}
-              onChange={e => setNewTransaction(prev => ({ ...prev, entityId: e.target.value }))}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
-            >
-              <option value="">Selecione...</option>
-              {entities.map(e => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Valor e Vencimento */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Valor (R$)</label>
-              <input
-                type="number"
-                value={newTransaction.amount}
-                onChange={e => setNewTransaction(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
-                placeholder="0.00"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Vencimento</label>
-              <input
-                type="date"
-                value={newTransaction.dueDate}
-                onChange={e => setNewTransaction(prev => ({ ...prev, dueDate: e.target.value }))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Centro de Custo */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Centro de Custo (DRE)</label>
-            <select
-              value={newTransaction.costCenterId}
-              onChange={e => setNewTransaction(prev => ({ ...prev, costCenterId: e.target.value }))}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500"
-            >
-              <option value="">Nenhum (opcional)</option>
-              {costCenters.map(cc => (
-                <option key={cc.id} value={cc.id}>{cc.codigo ? `${cc.codigo} - ` : ''}{cc.nome}</option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={handleSaveTransaction}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 transition"
-          >
-            <Save size={20} /> Salvar Lancamento
-          </button>
-        </div>
-      </Modal>
+      {/* ====== NOVO LANCAMENTO MODAL (com rateio) ====== */}
+      <TransactionFormModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={() => { setIsModalOpen(false); loadData(); }}
+        type={newTransactionType}
+      />
 
       {/* ====== SECURITY MODAL ====== */}
       <Modal isOpen={isSecurityModalOpen} onClose={() => { setIsSecurityModalOpen(false); setPendingSecureAction(null); }} title="Verificacao de Seguranca">
