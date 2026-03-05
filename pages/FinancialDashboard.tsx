@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, ArrowDownLeft, Filter, Plus, Archive, Wallet, Landmark, CreditCard, Trash2, Folder } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Filter, Plus, Archive, Wallet, Landmark, CreditCard, Trash2, Folder, Paperclip } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 import { ContaReceber } from '../services/receivableService';
@@ -22,6 +22,7 @@ export interface UnifiedTransaction {
   costCenterGroup?: string;
   costCenterName?: string;
   rateioCount?: number;
+  anexoUrl?: string;
 }
 
 interface Props {
@@ -230,7 +231,21 @@ const FinancialDashboard: React.FC<Props> = ({
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <div className="font-bold text-white mb-0.5">{tr.description}</div>
+                        <div className="font-bold text-white mb-0.5 flex items-center gap-1.5">
+                          {tr.description}
+                          {tr.anexoUrl && (
+                            <a
+                              href={tr.anexoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              title="Ver documento anexado"
+                              className="text-blue-400 hover:text-blue-300 transition shrink-0"
+                            >
+                              <Paperclip size={13} />
+                            </a>
+                          )}
+                        </div>
                         {tr.rateioCount && tr.rateioCount > 0 ? (
                           <span className="text-[9px] w-fit px-1.5 py-0.5 bg-purple-500/20 rounded text-purple-400 border border-purple-500/30 mb-1 flex items-center gap-1">
                             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 010 20M12 2v20M2 12h20"/></svg>
