@@ -237,7 +237,30 @@ const Registrations: React.FC = () => {
 
         // Ensure document is cleaned (remove mask chars for storage)
         if (payload.document) {
-            payload.document = payload.document.trim();
+            payload.document = payload.document.replace(/[.\-\/\s]/g, '').trim();
+        }
+
+        // Check for duplicate document (CNPJ/CPF)
+        if (payload.document) {
+            const cleanDoc = payload.document.replace(/\D/g, '');
+            const { data: existing } = await supabase
+                .from('entities')
+                .select('id, name, document')
+                .or(`document.eq.${cleanDoc},document.eq.${payload.document}`)
+                .limit(5);
+
+            const duplicates = (existing || []).filter(e => {
+                // Se estiver editando, ignorar o próprio registro
+                if (editingEntityId && e.id === editingEntityId) return false;
+                const eDoc = (e.document || '').replace(/\D/g, '');
+                return eDoc === cleanDoc;
+            });
+
+            if (duplicates.length > 0) {
+                const nomes = duplicates.map(d => `• ${d.name}`).join('\n');
+                alert(`⚠️ CNPJ/CPF já cadastrado!\n\nEste documento já pertence a:\n${nomes}\n\nEdite o cadastro existente ao invés de criar novo.`);
+                return;
+            }
         }
 
         console.log('[SAVE ENTITY] payload:', JSON.stringify(payload, null, 2));
@@ -245,12 +268,10 @@ const Registrations: React.FC = () => {
         try {
             if (editingEntityId) {
                 const { data, error } = await supabase.from('entities').update(payload).eq('id', editingEntityId).select();
-                console.log('[SAVE ENTITY] update result:', { data, error });
                 if (error) throw error;
                 alert('Cadastro atualizado com sucesso!');
             } else {
                 const { data, error } = await supabase.from('entities').insert(payload).select();
-                console.log('[SAVE ENTITY] insert result:', { data, error });
                 if (error) throw error;
                 alert('Cadastro realizado com sucesso!');
             }
