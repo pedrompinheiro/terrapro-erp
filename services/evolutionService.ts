@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Configurações (Lendo do .env ou usando padrão local)
 const API_URL = import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080';
-const API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY || 'terrapro123';
+const API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY || '';
 const INSTANCE_NAME = 'terrapro_bot'; // Nome fixo da instância para facilitar
 
 // Configuração do Axios
@@ -116,7 +116,6 @@ export const evolutionService = {
     // 6. Enviar Mensagem de Texto
     async sendText(phone: string, text: string) {
         try {
-            // Formata número (Evolution aceita com ou sem @s.whatsapp.net, mas o padrão BR é 55...)
             const cleanPhone = phone.replace(/\D/g, '');
             const remoteJid = cleanPhone.includes('@') ? cleanPhone : `${cleanPhone}@s.whatsapp.net`;
 
@@ -134,6 +133,67 @@ export const evolutionService = {
         } catch (error) {
             console.error('Erro ao enviar mensagem:', error);
             throw error;
+        }
+    },
+
+    // 7. Enviar Mídia (PDF, imagem, documento)
+    async sendMedia(phone: string, mediaUrl: string, caption?: string, mediaType: 'document' | 'image' = 'document', fileName?: string) {
+        try {
+            const cleanPhone = phone.replace(/\D/g, '');
+            const remoteJid = cleanPhone.includes('@') ? cleanPhone : `${cleanPhone}@s.whatsapp.net`;
+
+            const response = await api.post(`/message/sendMedia/${INSTANCE_NAME}`, {
+                number: remoteJid,
+                options: {
+                    delay: 1200,
+                    presence: "composing",
+                },
+                mediaMessage: {
+                    mediatype: mediaType,
+                    media: mediaUrl,
+                    caption: caption || '',
+                    fileName: fileName || 'documento.pdf'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Erro ao enviar mídia:', error);
+            throw error;
+        }
+    },
+
+    // 8. Configurar Webhook (aponta Evolution API → Supabase Edge Function)
+    async setWebhook(webhookUrl: string) {
+        try {
+            const response = await api.post(`/webhook/set/${INSTANCE_NAME}`, {
+                webhook: {
+                    enabled: true,
+                    url: webhookUrl,
+                    webhookByEvents: false,
+                    webhookBase64: false,
+                    events: [
+                        "MESSAGES_UPSERT",
+                        "GROUPS_UPSERT",
+                        "CONNECTION_UPDATE"
+                    ]
+                }
+            });
+            console.log('✅ Webhook configurado:', webhookUrl);
+            return response.data;
+        } catch (error) {
+            console.error('Erro ao configurar webhook:', error);
+            throw error;
+        }
+    },
+
+    // 9. Buscar configuração atual do webhook
+    async getWebhook() {
+        try {
+            const response = await api.get(`/webhook/find/${INSTANCE_NAME}`);
+            return response.data;
+        } catch (error) {
+            console.error('Erro ao buscar webhook:', error);
+            return null;
         }
     }
 };

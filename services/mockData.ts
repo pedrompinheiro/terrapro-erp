@@ -1,12 +1,17 @@
 
-import { AssetStatus, OSStatus, Asset, MaintenanceOS, StockItem, Transaction, PaymentStatus, ERPDocument } from '../types';
+import { AssetStatus, OSStatus, Asset, MaintenanceOS, Transaction, PaymentStatus, ERPDocument } from '../types';
 
 export const MOCK_ASSETS: Asset[] = [
     {
         id: 'EXC-042',
+        company_id: 'default',
+        code: 'EXC-042',
         name: 'Escavadeira CAT 320',
         model: 'CAT 320',
+        brand: 'Caterpillar',
         status: AssetStatus.OPERATING,
+        horometer_total: 12450,
+        odometer_total: 0,
         horometer: 12450,
         nextRevision: '12500h',
         efficiency: 92,
@@ -24,9 +29,14 @@ export const MOCK_ASSETS: Asset[] = [
     },
     {
         id: 'TRT-015',
+        company_id: 'default',
+        code: 'TRT-015',
         name: 'Trator JD 7200',
         model: 'JD 7200',
+        brand: 'John Deere',
         status: AssetStatus.OPERATING,
+        horometer_total: 8540,
+        odometer_total: 0,
         horometer: 8540,
         nextRevision: '8600h',
         efficiency: 88,
@@ -44,9 +54,14 @@ export const MOCK_ASSETS: Asset[] = [
     },
     {
         id: 'EXC-045',
+        company_id: 'default',
+        code: 'EXC-045',
         name: 'Escavadeira Volvo',
         model: 'EC200',
+        brand: 'Volvo',
         status: AssetStatus.MAINTENANCE,
+        horometer_total: 13200,
+        odometer_total: 0,
         horometer: 13200,
         nextRevision: '13000h',
         efficiency: 0,
@@ -90,23 +105,19 @@ export const MOCK_STATS = [
     { title: "Equipes em Campo", value: "08 Frentes", trend: "Normal", trendUp: true, iconType: "map", iconBg: "bg-slate-700" },
 ];
 
-export const MOCK_STOCK: StockItem[] = [
-    { sku: 'FIL-001', description: 'Filtro de Ar Primário', category: 'Filtros', currentQty: 12, minQty: 15, location: 'A-01', status: 'WARNING' },
-    { sku: 'OLE-15W', description: 'Óleo Motor 15W40', category: 'Lubrificantes', currentQty: 200, minQty: 100, location: 'T-01', status: 'NORMAL' },
-    { sku: 'PNE-295', description: 'Pneu 295/80 R22.5', category: 'Pneus', currentQty: 2, minQty: 4, location: 'B-02', status: 'CRITICAL' },
-];
+// MOCK_STOCK removido — migrado para Supabase (stockService.ts)
 
 export const MOCK_TRANSACTIONS: Transaction[] = [
-    { id: 'FAT-001', client: 'Construtora Norte', project: 'Rodovia BR-101', dueDate: '2024-02-15', amount: 45000.00, status: PaymentStatus.PENDING },
-    { id: 'FAT-002', client: 'Agropecuária Sul', project: 'Fazenda Sta. Rita', dueDate: '2024-02-10', amount: 12500.00, status: PaymentStatus.PAID },
-    { id: 'FAT-003', client: 'Prefeitura Dourados', project: 'Tapa Buracos', dueDate: '2024-01-30', amount: 8200.00, status: PaymentStatus.OVERDUE },
+    { id: 'FAT-001', company_id: 'default', client: 'Construtora Norte', description: 'Rodovia BR-101', due_date: '2024-02-15', amount: 45000.00, type: 'INCOME', status: PaymentStatus.PENDING },
+    { id: 'FAT-002', company_id: 'default', client: 'Agropecuária Sul', description: 'Fazenda Sta. Rita', due_date: '2024-02-10', amount: 12500.00, type: 'INCOME', status: PaymentStatus.PAID },
+    { id: 'FAT-003', company_id: 'default', client: 'Prefeitura Dourados', description: 'Tapa Buracos', due_date: '2024-01-30', amount: 8200.00, type: 'INCOME', status: PaymentStatus.OVERDUE },
 ];
 
 export const MOCK_MAINTENANCE_OS: MaintenanceOS[] = [
-    { id: 'OS-8820', assetId: 'EXC-042', assetName: 'Escavadeira CAT 320', priority: 'HIGH', status: OSStatus.IN_PROGRESS, mechanic: 'João Mecânico', description: 'Vazamento no cilindro hidráulico principal', progress: 60, partsNeeded: ['Kit Vedação 120mm', 'Óleo Hidráulico 68'] },
-    { id: 'OS-8821', asset_id: 'TRT-015', assetName: 'Trator JD 7200', priority: 'URGENT', status: OSStatus.WAITING_PARTS, mechanic: 'Carlos Lima', description: 'Superaquecimento do motor - Troca de radiador', progress: 30, partsNeeded: ['Radiador JD-7200', 'Aditivo Arrefecimento'] },
-    { id: 'OS-8822', asset_id: 'CMH-002', assetName: 'Caminhão G420', priority: 'LOW', status: OSStatus.PENDING, description: 'Revisão preventiva 5.000km', progress: 0 },
-    { id: 'OS-8823', asset_id: 'EXC-045', assetName: 'Escavadeira Volvo', priority: 'MEDIUM', status: OSStatus.COMPLETED, mechanic: 'João Mecânico', description: 'Troca de dentes da caçamba', progress: 100 },
+    { id: 'OS-8820', company_id: 'default', asset_id: 'EXC-042', assetName: 'Escavadeira CAT 320', seq_number: 8820, type: 'CORRECTIVE', priority: 'HIGH', status: OSStatus.IN_PROGRESS, mechanic: 'João Mecânico', description: 'Vazamento no cilindro hidráulico principal', progress: 60, partsNeeded: ['Kit Vedação 120mm', 'Óleo Hidráulico 68'], opened_at: '2024-02-01' },
+    { id: 'OS-8821', company_id: 'default', asset_id: 'TRT-015', assetName: 'Trator JD 7200', seq_number: 8821, type: 'CORRECTIVE', priority: 'URGENT', status: OSStatus.WAITING_PARTS, mechanic: 'Carlos Lima', description: 'Superaquecimento do motor - Troca de radiador', progress: 30, partsNeeded: ['Radiador JD-7200', 'Aditivo Arrefecimento'], opened_at: '2024-02-01' },
+    { id: 'OS-8822', company_id: 'default', asset_id: 'CMH-002', assetName: 'Caminhão G420', seq_number: 8822, type: 'PREVENTIVE', priority: 'LOW', status: OSStatus.PENDING, description: 'Revisão preventiva 5.000km', progress: 0, opened_at: '2024-01-28' },
+    { id: 'OS-8823', company_id: 'default', asset_id: 'EXC-045', assetName: 'Escavadeira Volvo', seq_number: 8823, type: 'CORRECTIVE', priority: 'MEDIUM', status: OSStatus.COMPLETED, mechanic: 'João Mecânico', description: 'Troca de dentes da caçamba', progress: 100, opened_at: '2024-01-25' },
 ];
 
 export interface TimeRecord {

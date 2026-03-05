@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Fluxograma — Almoxarifado TerraPro ERP</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
+        h1 { text-align: center; font-size: 28px; margin-bottom: 8px; color: #fff; }
+        .subtitle { text-align: center; font-size: 14px; color: #64748b; margin-bottom: 32px; }
+        .section { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+        .section h2 { font-size: 18px; color: #38bdf8; margin-bottom: 4px; }
+        .section .desc { font-size: 13px; color: #94a3b8; margin-bottom: 16px; }
+        .mermaid { display: flex; justify-content: center; }
+        .mermaid svg { max-width: 100%; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        @media print {
+            body { background: #fff; color: #111; }
+            .section { background: #f8fafc; border-color: #cbd5e1; }
+            .section h2 { color: #0284c7; }
+        }
+    </style>
+</head>
+<body>
+    <h1>📦 Fluxograma do Almoxarifado</h1>
+    <p class="subtitle">TerraPro ERP — Como funciona o controle de estoque</p>
+
+    <!-- 1. VISÃO GERAL DAS ABAS -->
+    <div class="section">
+        <h2>1. Telas do Almoxarifado</h2>
+        <p class="desc">O almoxarifado tem 6 telas, cada uma com uma função diferente.</p>
+        <div class="mermaid">
+graph LR
+    INV["🏭 ALMOXARIFADO"]
+    INV --> EST["📦 ESTOQUE<br/>Ver todos os produtos<br/>Cadastrar, editar, buscar"]
+    INV --> MOV["📊 MOVIMENTACOES<br/>Ver tudo que entrou<br/>e saiu do estoque"]
+    INV --> OS["🔧 ORDENS DE SERVICO<br/>Reparos e manutencoes<br/>Pecas usadas"]
+    INV --> COMP["🛒 COMPRAS<br/>Pedidos ao fornecedor<br/>Recebimento e Notas"]
+    INV --> TEC["👷 TECNICOS<br/>Cadastro de mecanicos<br/>e vendedores"]
+    INV --> REL["📈 RELATORIOS<br/>Resumos e alertas<br/>Estoque baixo"]
+
+    style INV fill:#0f766e,stroke:#14b8a6,color:#fff
+    style EST fill:#1e40af,stroke:#3b82f6,color:#fff
+    style MOV fill:#7e22ce,stroke:#a855f7,color:#fff
+    style OS fill:#b45309,stroke:#f59e0b,color:#fff
+    style COMP fill:#15803d,stroke:#22c55e,color:#fff
+    style TEC fill:#be123c,stroke:#f43f5e,color:#fff
+    style REL fill:#4338ca,stroke:#818cf8,color:#fff
+        </div>
+    </div>
+
+    <!-- 2. FLUXO PRINCIPAL: COMPRA → RECEBIMENTO → ESTOQUE -->
+    <div class="section">
+        <h2>2. Comprando Mercadoria — Passo a Passo</h2>
+        <p class="desc">Desde o pedido ao fornecedor ate a peca entrar no estoque.</p>
+        <div class="mermaid">
+graph TD
+    A["🛒 Fazer Pedido ao Fornecedor<br/>Tela: COMPRAS, aba PEDIDOS"]
+    A -->|"Escolhe o fornecedor<br/>Coloca os itens, quantidade e preco"| B["📋 Pedido Criado<br/>Situacao: EM ABERTO"]
+    B -->|"A mercadoria chegou<br/>na empresa"| C["📥 Registrar Recebimento<br/>Tela: COMPRAS, aba RETIRADAS"]
+    C -->|"Confere o que veio<br/>com o que foi pedido"| D["📝 Recebimento em Rascunho<br/>Ainda nao confirmado"]
+    D -->|"Tudo certo,<br/>conferencia OK"| E{"Para onde vai<br/>cada item?"}
+
+    E -->|"Vai pro estoque"| F["📦 Entra no Estoque<br/>Quantidade aumenta<br/>Fica disponivel pra uso"]
+    E -->|"Vai direto<br/>pra maquina"| G["🚜 Direto pra Maquina<br/>Nao passa pelo estoque<br/>Vincula ao equipamento"]
+    E -->|"Vai pro setor<br/>centro de custo"| H["💰 Direcionado ao Setor<br/>Controla o gasto<br/>por departamento"]
+    E -->|"Vai pra uma<br/>ordem de servico"| I["🔧 Direto pro Reparo<br/>Usado imediatamente<br/>na manutencao"]
+
+    D -->|"Confirmar<br/>recebimento"| J["✅ Recebimento Confirmado<br/>Estoque atualizado"]
+    J --> K{"Nota fiscal<br/>ja chegou?"}
+    K -->|"Sim"| L["📄 Nota Vinculada<br/>Tela: COMPRAS, aba NOTAS"]
+    K -->|"Ainda nao"| M["⏳ Aguardando Nota<br/>Fiscal pendente"]
+    M -->|"Nota chegou"| L
+
+    style A fill:#15803d,stroke:#22c55e,color:#fff
+    style B fill:#1e40af,stroke:#3b82f6,color:#fff
+    style C fill:#7e22ce,stroke:#a855f7,color:#fff
+    style D fill:#6b7280,stroke:#9ca3af,color:#fff
+    style E fill:#b45309,stroke:#f59e0b,color:#fff
+    style F fill:#059669,stroke:#34d399,color:#fff
+    style G fill:#0369a1,stroke:#38bdf8,color:#fff
+    style H fill:#7c3aed,stroke:#a78bfa,color:#fff
+    style I fill:#c2410c,stroke:#fb923c,color:#fff
+    style J fill:#047857,stroke:#10b981,color:#fff
+    style L fill:#0f766e,stroke:#14b8a6,color:#fff
+    style M fill:#92400e,stroke:#fbbf24,color:#fff
+        </div>
+    </div>
+
+    <!-- 3. FLUXO SAÍDA: ORDEM DE SERVIÇO -->
+    <div class="section">
+        <h2>3. Usando Pecas num Reparo — Saida do Estoque</h2>
+        <p class="desc">Como as pecas saem do estoque quando sao usadas numa manutencao.</p>
+        <div class="mermaid">
+graph TD
+    A["🔧 Abrir Ordem de Servico<br/>Tela: ORDENS DE SERVICO"]
+    A -->|"Informa o defeito,<br/>a maquina e o cliente"| B["📋 OS Aberta<br/>Aguardando pecas"]
+    B -->|"Mecanico lista<br/>o que vai precisar"| C["🔩 Itens da OS<br/>Pecas e servicos"]
+
+    C --> D{"O que foi<br/>adicionado?"}
+    D -->|"E uma peca<br/>produto fisico"| E["📦 Peca<br/>Sai do estoque"]
+    D -->|"E um servico<br/>mao de obra"| F["🛠️ Servico<br/>Nao mexe no estoque"]
+
+    E -->|"Quando a OS<br/>e finalizada"| G["📊 Saida Registrada<br/>Quantidade diminui"]
+    F -->|"Quando a OS<br/>e finalizada"| H["💵 Valor Cobrado<br/>Sem mexer no estoque"]
+
+    G --> I["✅ Estoque Atualizado"]
+    I --> J{"A quantidade ficou<br/>abaixo do minimo?"}
+    J -->|"Sim"| K["⚠️ ALERTA!<br/>Estoque baixo<br/>Aparece nos Relatorios"]
+    J -->|"Nao"| L["✅ Tudo OK<br/>Quantidade normal"]
+
+    style A fill:#b45309,stroke:#f59e0b,color:#fff
+    style B fill:#1e40af,stroke:#3b82f6,color:#fff
+    style C fill:#7e22ce,stroke:#a855f7,color:#fff
+    style E fill:#dc2626,stroke:#ef4444,color:#fff
+    style F fill:#6b7280,stroke:#9ca3af,color:#fff
+    style G fill:#dc2626,stroke:#f87171,color:#fff
+    style I fill:#059669,stroke:#34d399,color:#fff
+    style K fill:#b91c1c,stroke:#fca5a5,color:#fff
+    style L fill:#047857,stroke:#10b981,color:#fff
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- 4. TIPOS DE MOVIMENTO -->
+        <div class="section">
+            <h2>4. O Que Pode Acontecer com o Estoque</h2>
+            <p class="desc">Todas as formas de entrada e saida de produtos.</p>
+            <div class="mermaid">
+graph TD
+    M["📊 MOVIMENTACOES"]
+
+    M --> ENT["🟢 ENTRADAS<br/>Quantidade aumenta"]
+    ENT --> E1["Compra de Fornecedor<br/>Pedido recebido"]
+    ENT --> E2["Devolucao<br/>Peca voltou pro estoque"]
+    ENT --> E3["Ajuste Manual<br/>Correcao pra mais"]
+    ENT --> E4["Importacao de Nota<br/>Entrada por NF-e"]
+
+    M --> SAI["🔴 SAIDAS<br/>Quantidade diminui"]
+    SAI --> S1["Usada em Reparo<br/>Saiu pra OS"]
+    SAI --> S2["Venda Direta<br/>Vendida ao cliente"]
+    SAI --> S3["Ajuste Manual<br/>Correcao pra menos"]
+    SAI --> S4["Perda ou Dano<br/>Extraviada/quebrada"]
+    SAI --> S5["Uso Interno<br/>Consumo da oficina"]
+
+    M --> TRA["🔵 TRANSFERENCIA<br/>Muda de lugar, mesma qtd"]
+
+    style M fill:#4338ca,stroke:#818cf8,color:#fff
+    style ENT fill:#15803d,stroke:#22c55e,color:#fff
+    style SAI fill:#dc2626,stroke:#ef4444,color:#fff
+    style TRA fill:#1e40af,stroke:#3b82f6,color:#fff
+    style E1 fill:#064e3b,stroke:#34d399,color:#fff
+    style E2 fill:#064e3b,stroke:#34d399,color:#fff
+    style E3 fill:#064e3b,stroke:#34d399,color:#fff
+    style E4 fill:#064e3b,stroke:#34d399,color:#fff
+    style S1 fill:#7f1d1d,stroke:#fca5a5,color:#fff
+    style S2 fill:#7f1d1d,stroke:#fca5a5,color:#fff
+    style S3 fill:#7f1d1d,stroke:#fca5a5,color:#fff
+    style S4 fill:#7f1d1d,stroke:#fca5a5,color:#fff
+    style S5 fill:#7f1d1d,stroke:#fca5a5,color:#fff
+            </div>
+        </div>
+
+        <!-- 5. STATUS DO ITEM -->
+        <div class="section">
+            <h2>5. Situacao do Produto — Automatico</h2>
+            <p class="desc">O sistema avisa quando um produto esta acabando.</p>
+            <div class="mermaid">
+graph TD
+    CHECK{"Verificar<br/>quantidade atual"}
+
+    CHECK -->|"Tem bastante<br/>acima do minimo"| NORMAL["✅ NORMAL<br/>Estoque OK"]
+    CHECK -->|"Tem pouco<br/>abaixo do minimo"| WARNING["⚠️ ATENCAO<br/>Estoque baixo"]
+    CHECK -->|"Zerou ou<br/>esta bloqueado"| CRITICAL["🚨 CRITICO<br/>Sem estoque!"]
+
+    WARNING -->|"Comprou mais"| NORMAL
+    CRITICAL -->|"Comprou mais"| NORMAL
+
+    WARNING -->|"Usou mais"| CRITICAL
+    NORMAL -->|"Usou bastante"| WARNING
+
+    style CHECK fill:#4338ca,stroke:#818cf8,color:#fff
+    style NORMAL fill:#059669,stroke:#34d399,color:#fff
+    style WARNING fill:#d97706,stroke:#fbbf24,color:#fff
+    style CRITICAL fill:#dc2626,stroke:#ef4444,color:#fff
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. STATUS DO RECEBIMENTO -->
+    <div class="section">
+        <h2>6. Etapas do Recebimento de Mercadoria</h2>
+        <p class="desc">O que acontece desde a mercadoria chegar ate a nota ser vinculada.</p>
+        <div class="mermaid">
+graph LR
+    A["📝 RASCUNHO<br/>Conferindo o que chegou"]
+    A -->|"Conferencia OK<br/>Destino definido"| B["✅ CONFIRMADO<br/>Estoque atualizado<br/>Tudo registrado"]
+    B -->|"Aguardando<br/>nota fiscal"| C["⏳ AGUARDANDO NOTA<br/>Pendencia fiscal"]
+    C -->|"Nota chegou<br/>e foi vinculada"| D["📄 COMPLETO<br/>Tudo certo!"]
+
+    A -->|"Deu errado"| E["❌ CANCELADO"]
+    B -->|"Problema<br/>apos confirmar"| E
+    C -->|"Cancelado"| E
+
+    style A fill:#6b7280,stroke:#9ca3af,color:#fff
+    style B fill:#059669,stroke:#34d399,color:#fff
+    style C fill:#d97706,stroke:#fbbf24,color:#fff
+    style D fill:#0f766e,stroke:#14b8a6,color:#fff
+    style E fill:#dc2626,stroke:#ef4444,color:#fff
+        </div>
+    </div>
+
+    <!-- 7. COMO AS INFORMAÇÕES SE CONECTAM -->
+    <div class="section">
+        <h2>7. Como Tudo se Conecta</h2>
+        <p class="desc">Como as informacoes se ligam entre as diferentes telas.</p>
+        <div class="mermaid">
+graph TD
+    ITEMS["📦 Produtos<br/>1.881 itens cadastrados<br/>Codigo, quantidade, preco"]
+    CAT["📂 Categorias<br/>53 grupos"]
+    BRAND["🏷️ Marcas<br/>50 fabricantes"]
+
+    CAT -->|"pertence a"| ITEMS
+    BRAND -->|"pertence a"| ITEMS
+
+    ITEMS -->|"registra<br/>entrada/saida"| MOV["📊 Movimentacoes<br/>Historico completo<br/>Quantidade, valor, saldo"]
+
+    PO["🛒 Pedidos de Compra<br/>Feitos ao fornecedor"] -->|"gera"| POI["📋 Itens do Pedido"]
+    PO -->|"origina"| REC["📥 Recebimentos"]
+    REC -->|"detalha"| RECI["📝 Itens Recebidos"]
+    RECI -->|"registra"| MOV
+
+    SO["🔧 Ordens de Servico<br/>994 reparos"] -->|"lista"| SOI["🔩 Pecas e Servicos<br/>2.543 itens usados"]
+    SOI -->|"registra saida"| MOV
+
+    ITEMS -.->|"referencia"| POI
+    ITEMS -.->|"referencia"| SOI
+    ITEMS -.->|"referencia"| RECI
+
+    TECH["👷 Mecanicos<br/>36 profissionais"] -.->|"trabalha em"| SO
+    ENT["🏢 Fornecedores<br/>e Clientes"] -.->|"vende pra"| PO
+    ENT -.->|"solicita"| SO
+
+    style ITEMS fill:#1e40af,stroke:#3b82f6,color:#fff
+    style CAT fill:#6b7280,stroke:#9ca3af,color:#fff
+    style BRAND fill:#6b7280,stroke:#9ca3af,color:#fff
+    style MOV fill:#7e22ce,stroke:#a855f7,color:#fff
+    style PO fill:#15803d,stroke:#22c55e,color:#fff
+    style POI fill:#064e3b,stroke:#34d399,color:#fff
+    style REC fill:#0369a1,stroke:#38bdf8,color:#fff
+    style RECI fill:#075985,stroke:#7dd3fc,color:#fff
+    style SO fill:#b45309,stroke:#f59e0b,color:#fff
+    style SOI fill:#92400e,stroke:#fbbf24,color:#fff
+    style TECH fill:#be123c,stroke:#f43f5e,color:#fff
+    style ENT fill:#4338ca,stroke:#818cf8,color:#fff
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                darkMode: true,
+                background: '#1e293b',
+                primaryColor: '#1e40af',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#3b82f6',
+                lineColor: '#64748b',
+                secondaryColor: '#7e22ce',
+                tertiaryColor: '#15803d',
+                fontFamily: 'Segoe UI, Arial, sans-serif',
+                fontSize: '13px',
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 12,
+            }
+        });
+    </script>
+</body>
+</html>

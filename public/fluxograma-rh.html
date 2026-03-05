@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Fluxograma — RH e Ponto TerraPro ERP</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
+        h1 { text-align: center; font-size: 28px; margin-bottom: 8px; color: #fff; }
+        .subtitle { text-align: center; font-size: 14px; color: #64748b; margin-bottom: 32px; }
+        .section { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+        .section h2 { font-size: 18px; color: #38bdf8; margin-bottom: 4px; }
+        .section .desc { font-size: 13px; color: #94a3b8; margin-bottom: 16px; }
+        .mermaid { display: flex; justify-content: center; }
+        .mermaid svg { max-width: 100%; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        @media print {
+            body { background: #fff; color: #111; }
+            .section { background: #f8fafc; border-color: #cbd5e1; }
+            .section h2 { color: #0284c7; }
+        }
+    </style>
+</head>
+<body>
+    <h1>👷 Fluxograma do RH e Ponto</h1>
+    <p class="subtitle">TerraPro ERP — Cadastro de funcionarios, lancamento e calculo de ponto</p>
+
+    <!-- 1. VISÃO GERAL -->
+    <div class="section">
+        <h2>1. Telas do Modulo de RH</h2>
+        <p class="desc">O RH usa 4 telas principais que se conectam entre si.</p>
+        <div class="mermaid">
+graph LR
+    RH["👷 RH e PONTO"]
+    RH --> CAD["📋 CADASTROS<br/>Funcionarios<br/>Turnos de trabalho<br/>Justificativas de falta"]
+    RH --> OCR["📸 LANCAMENTO DE PONTO<br/>Importar foto do cartao<br/>Leitura automatica por IA<br/>Conferir e salvar"]
+    RH --> CALC["🧮 CALCULO DE PONTO<br/>Horas trabalhadas<br/>Extras, faltas, noturno<br/>Relatorio geral"]
+    RH --> INT["🔗 INTEGRACOES<br/>Secullum Ponto 4<br/>Importacao de turnos<br/>Exportacao Excel"]
+
+    style RH fill:#0f766e,stroke:#14b8a6,color:#fff
+    style CAD fill:#1e40af,stroke:#3b82f6,color:#fff
+    style OCR fill:#7e22ce,stroke:#a855f7,color:#fff
+    style CALC fill:#b45309,stroke:#f59e0b,color:#fff
+    style INT fill:#15803d,stroke:#22c55e,color:#fff
+        </div>
+    </div>
+
+    <!-- 2. CADASTRO DE FUNCIONÁRIO -->
+    <div class="section">
+        <h2>2. Cadastrando um Funcionario</h2>
+        <p class="desc">Passo a passo para cadastrar um novo funcionario no sistema.</p>
+        <div class="mermaid">
+graph TD
+    A["📋 Abrir tela CADASTROS<br/>Aba: Funcionarios"]
+    A -->|"Clica no botao +"| B["📝 Preencher Dados Pessoais<br/>Nome, CPF, telefone<br/>Endereco, data nascimento"]
+    B --> C["📄 Preencher Dados do Contrato<br/>Cargo, departamento<br/>Data de admissao, matricula"]
+    C --> D{"Tem turno de<br/>trabalho?"}
+    D -->|"Sim"| E["⏰ Selecionar o Turno<br/>Exemplo: Turno C Balanca<br/>07:00 as 17:00"]
+    D -->|"Nao, precisa criar"| F["➕ Criar Turno Primeiro<br/>Aba: Turnos de Trabalho"]
+    F --> E
+    E --> G["💰 Preencher Dados Bancarios<br/>Banco, agencia, conta<br/>Chave PIX - opcional"]
+    G --> H["✅ Salvar Funcionario<br/>Pronto pra usar no ponto!"]
+
+    H --> I["⚠️ IMPORTANTE:<br/>Sem turno = nao calcula ponto<br/>Sempre atribuir um turno!"]
+
+    style A fill:#1e40af,stroke:#3b82f6,color:#fff
+    style B fill:#7e22ce,stroke:#a855f7,color:#fff
+    style C fill:#7e22ce,stroke:#a855f7,color:#fff
+    style D fill:#b45309,stroke:#f59e0b,color:#fff
+    style E fill:#059669,stroke:#34d399,color:#fff
+    style F fill:#dc2626,stroke:#ef4444,color:#fff
+    style G fill:#6b7280,stroke:#9ca3af,color:#fff
+    style H fill:#047857,stroke:#10b981,color:#fff
+    style I fill:#92400e,stroke:#fbbf24,color:#fff
+        </div>
+    </div>
+
+    <!-- 3. CONFIGURANDO TURNO -->
+    <div class="section">
+        <h2>3. Criando um Turno de Trabalho</h2>
+        <p class="desc">O turno define os horarios e regras de cada funcionario.</p>
+        <div class="mermaid">
+graph TD
+    A["⏰ Abrir tela CADASTROS<br/>Aba: Turnos de Trabalho"]
+    A -->|"Clica no botao +"| B["📝 Dados Gerais<br/>Nome do turno, cor<br/>Dias da semana que trabalha"]
+    B --> C["🕐 Definir Horarios<br/>Entrada, saida<br/>Inicio e fim do almoco"]
+    C --> D{"Horario muda<br/>conforme o dia?"}
+    D -->|"Nao, e fixo"| E["✅ Horario Fixo<br/>Mesmo horario<br/>todos os dias"]
+    D -->|"Sim, varia"| F["📅 Horario por Dia<br/>Seg: 07-17, Ter: 08-18<br/>Ate 3 pares de batida por dia"]
+    E --> G["⚙️ Regras do Turno"]
+    F --> G
+    G --> G1["Tolerancia de atraso<br/>Quantos minutos pode atrasar<br/>sem descontar - padrao CLT: 5 min"]
+    G --> G2["Tolerancia de hora extra<br/>Quantos minutos a mais<br/>sem contar como extra"]
+    G --> G3["Turno noturno?<br/>22h as 05h = hora reduzida<br/>52min30s conta como 1 hora"]
+    G --> G4["Banco de horas?<br/>Extras viram folga futura<br/>em vez de pagamento"]
+    G1 --> H["✅ Salvar Turno<br/>Pronto pra atribuir<br/>aos funcionarios!"]
+    G2 --> H
+    G3 --> H
+    G4 --> H
+
+    style A fill:#1e40af,stroke:#3b82f6,color:#fff
+    style B fill:#7e22ce,stroke:#a855f7,color:#fff
+    style C fill:#7e22ce,stroke:#a855f7,color:#fff
+    style D fill:#b45309,stroke:#f59e0b,color:#fff
+    style E fill:#059669,stroke:#34d399,color:#fff
+    style F fill:#0369a1,stroke:#38bdf8,color:#fff
+    style G fill:#4338ca,stroke:#818cf8,color:#fff
+    style G1 fill:#064e3b,stroke:#34d399,color:#fff
+    style G2 fill:#064e3b,stroke:#34d399,color:#fff
+    style G3 fill:#064e3b,stroke:#34d399,color:#fff
+    style G4 fill:#064e3b,stroke:#34d399,color:#fff
+    style H fill:#047857,stroke:#10b981,color:#fff
+        </div>
+    </div>
+
+    <!-- 4. IMPORTAR PONTO POR FOTO (OCR) -->
+    <div class="section">
+        <h2>4. Importando o Ponto pela Foto do Cartao</h2>
+        <p class="desc">O sistema le a foto do cartao de ponto e preenche os horarios automaticamente.</p>
+        <div class="mermaid">
+graph TD
+    A["📸 Abrir tela LANCAMENTO DE PONTO"]
+    A -->|"Arrasta a foto<br/>ou clica pra escolher"| B["🖼️ Foto do Cartao Carregada<br/>Pode enviar varias de uma vez"]
+    B -->|"Clica em Processar"| C["🤖 IA Le a Foto<br/>Gemini reconhece<br/>nomes, datas e horarios"]
+    C --> D{"A IA conseguiu<br/>ler tudo?"}
+    D -->|"Sim"| E["✅ Dados Extraidos<br/>Nome do funcionario<br/>encontrado automaticamente"]
+    D -->|"Parcial ou<br/>com erro"| F["⚠️ Revisar Manualmente<br/>Corrigir horarios ilegíveis<br/>Confirmar funcionario"]
+    E --> G["👁️ Conferir os Dados<br/>Ver cada dia e horario<br/>Marcar quais dias salvar"]
+    F --> G
+    G --> H{"Tudo certo?"}
+    H -->|"Sim"| I["💾 Salvar no Sistema<br/>Horarios vao pra tabela<br/>de batidas do funcionario"]
+    H -->|"Precisa ajustar"| J["✏️ Editar Horarios<br/>Mudar entrada/saida<br/>de qualquer dia"]
+    J --> G
+
+    I --> K["✅ Ponto Importado!<br/>Ja pode calcular<br/>na tela de Calculo"]
+
+    style A fill:#7e22ce,stroke:#a855f7,color:#fff
+    style B fill:#1e40af,stroke:#3b82f6,color:#fff
+    style C fill:#b45309,stroke:#f59e0b,color:#fff
+    style D fill:#4338ca,stroke:#818cf8,color:#fff
+    style E fill:#059669,stroke:#34d399,color:#fff
+    style F fill:#d97706,stroke:#fbbf24,color:#fff
+    style G fill:#0369a1,stroke:#38bdf8,color:#fff
+    style H fill:#4338ca,stroke:#818cf8,color:#fff
+    style I fill:#047857,stroke:#10b981,color:#fff
+    style J fill:#6b7280,stroke:#9ca3af,color:#fff
+    style K fill:#059669,stroke:#34d399,color:#fff
+        </div>
+    </div>
+
+    <!-- 5. CÁLCULO DE PONTO -->
+    <div class="section">
+        <h2>5. Calculando o Ponto do Funcionario</h2>
+        <p class="desc">O sistema calcula tudo: horas trabalhadas, extras, faltas, noturno e saldo.</p>
+        <div class="mermaid">
+graph TD
+    A["🧮 Abrir tela CALCULO DE PONTO"]
+    A -->|"Escolher funcionario<br/>e o mes/ano"| B["👤 Funcionario Selecionado"]
+    B -->|"Clica em Calcular"| C["⚙️ Sistema Processa<br/>Pega as batidas salvas<br/>Pega o turno do funcionario<br/>Verifica feriados"]
+    C --> D["📊 Resultado do Mes<br/>Tabela dia a dia"]
+
+    D --> E["Ver cada dia:<br/>Horarios de entrada/saida<br/>Horas trabalhadas<br/>Horas esperadas<br/>Extra 50% e 100%<br/>Falta e Noturno"]
+
+    E --> F{"Precisa<br/>ajustar algo?"}
+    F -->|"Editar horario"| G["✏️ Clicar no Horario<br/>Digitar o novo valor<br/>Recalcula automatico"]
+    F -->|"Justificar falta"| H["📝 Digitar letra no campo<br/>Aparece lista de opcoes:<br/>Atestado, Chuva, Dispensado..."]
+    F -->|"Mover batida<br/>pro dia certo"| I["↔️ Botoes na lateral<br/>Move a batida<br/>um dia pra frente ou tras"]
+    F -->|"Tudo certo!"| J["✅ Calculo OK"]
+
+    G --> E
+    H --> E
+    I --> E
+
+    J --> K{"Quer gerar<br/>relatorio?"}
+    K -->|"De um funcionario"| L["🖨️ Imprimir<br/>Cartao de ponto<br/>individual"]
+    K -->|"De todos"| M["📋 Relatorio Geral<br/>Escolher periodo De/Ate<br/>Todos os funcionarios"]
+    M --> N["Escolher formato"]
+    N --> N1["🖨️ Imprimir / PDF<br/>Abre previa na tela<br/>Botao de imprimir"]
+    N --> N2["📊 Salvar Excel<br/>Arquivo XLSX<br/>Uma aba por funcionario"]
+
+    style A fill:#b45309,stroke:#f59e0b,color:#fff
+    style B fill:#1e40af,stroke:#3b82f6,color:#fff
+    style C fill:#7e22ce,stroke:#a855f7,color:#fff
+    style D fill:#059669,stroke:#34d399,color:#fff
+    style E fill:#0369a1,stroke:#38bdf8,color:#fff
+    style F fill:#4338ca,stroke:#818cf8,color:#fff
+    style G fill:#6b7280,stroke:#9ca3af,color:#fff
+    style H fill:#6b7280,stroke:#9ca3af,color:#fff
+    style I fill:#6b7280,stroke:#9ca3af,color:#fff
+    style J fill:#047857,stroke:#10b981,color:#fff
+    style K fill:#4338ca,stroke:#818cf8,color:#fff
+    style L fill:#0f766e,stroke:#14b8a6,color:#fff
+    style M fill:#0f766e,stroke:#14b8a6,color:#fff
+    style N fill:#b45309,stroke:#f59e0b,color:#fff
+    style N1 fill:#1e40af,stroke:#3b82f6,color:#fff
+    style N2 fill:#15803d,stroke:#22c55e,color:#fff
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- 6. REGRAS CLT APLICADAS -->
+        <div class="section">
+            <h2>6. Regras que o Sistema Aplica</h2>
+            <p class="desc">Calculos automaticos conforme a CLT.</p>
+            <div class="mermaid">
+graph TD
+    CLT["⚖️ REGRAS CLT"]
+
+    CLT --> TOL["⏱️ Tolerancia<br/>Ate 5 minutos de atraso<br/>nao desconta - CLT Art. 58"]
+    CLT --> HE["💰 Hora Extra"]
+    HE --> HE1["Dia util: ate 2h = 50%<br/>acima de 2h = 100%"]
+    HE --> HE2["Sabado: tudo 50%"]
+    HE --> HE3["Domingo e feriado:<br/>tudo 100%"]
+
+    CLT --> NOT["🌙 Adicional Noturno<br/>Das 22h as 05h<br/>52min30s vale como 1 hora<br/>Adicional de 11,43%"]
+
+    CLT --> DSR["📅 Descanso Semanal<br/>1 dia de folga por semana<br/>Proporcional as horas"]
+
+    CLT --> BH["🔄 Banco de Horas<br/>Horas extras viram folga<br/>Se ativado no turno"]
+
+    style CLT fill:#4338ca,stroke:#818cf8,color:#fff
+    style TOL fill:#064e3b,stroke:#34d399,color:#fff
+    style HE fill:#b45309,stroke:#f59e0b,color:#fff
+    style HE1 fill:#92400e,stroke:#fbbf24,color:#fff
+    style HE2 fill:#92400e,stroke:#fbbf24,color:#fff
+    style HE3 fill:#92400e,stroke:#fbbf24,color:#fff
+    style NOT fill:#1e40af,stroke:#3b82f6,color:#fff
+    style DSR fill:#7e22ce,stroke:#a855f7,color:#fff
+    style BH fill:#0f766e,stroke:#14b8a6,color:#fff
+            </div>
+        </div>
+
+        <!-- 7. JUSTIFICATIVAS DE FALTA -->
+        <div class="section">
+            <h2>7. Justificativas de Falta</h2>
+            <p class="desc">Tipos de abono que podem ser lancados em cada dia.</p>
+            <div class="mermaid">
+graph TD
+    JUST["📝 JUSTIFICATIVAS"]
+
+    JUST --> J1["🏥 Atestado Medico<br/>Abona a falta<br/>Nao afeta o DSR"]
+    JUST --> J2["🌧️ Chuva<br/>Abona a falta<br/>Nao afeta o DSR"]
+    JUST --> J3["🚪 Dispensado<br/>Empresa mandou embora<br/>Nao afeta o DSR"]
+    JUST --> J4["📞 Sobreaviso<br/>De plantao em casa<br/>Nao afeta o DSR"]
+
+    JUST --> CUSTOM["➕ Criar Novas<br/>Tela: Cadastros<br/>Aba: Justificativas"]
+
+    style JUST fill:#0369a1,stroke:#38bdf8,color:#fff
+    style J1 fill:#064e3b,stroke:#34d399,color:#fff
+    style J2 fill:#064e3b,stroke:#34d399,color:#fff
+    style J3 fill:#064e3b,stroke:#34d399,color:#fff
+    style J4 fill:#064e3b,stroke:#34d399,color:#fff
+    style CUSTOM fill:#7e22ce,stroke:#a855f7,color:#fff
+            </div>
+        </div>
+    </div>
+
+    <!-- 8. FLUXO COMPLETO -->
+    <div class="section">
+        <h2>8. O Caminho Completo — Do Cadastro ao Relatorio</h2>
+        <p class="desc">Visao geral de como tudo se conecta, do inicio ao fim.</p>
+        <div class="mermaid">
+graph LR
+    A["1. CADASTRAR<br/>Funcionario + Turno"]
+    A -->|"Funcionario tem<br/>turno atribuido"| B["2. LANCAR PONTO<br/>Foto do cartao<br/>ou digitar manual"]
+    B -->|"Batidas salvas<br/>no sistema"| C["3. CALCULAR<br/>Horas, extras<br/>faltas, noturno"]
+    C -->|"Revisar e ajustar<br/>justificar faltas"| D["4. RELATORIO<br/>Imprimir, PDF<br/>ou Excel"]
+
+    A2["🔗 SECULLUM<br/>Turnos importados<br/>do sistema antigo"] -.->|"Migracao"| A
+    B2["🤖 IA GEMINI<br/>Le a foto do<br/>cartao de ponto"] -.->|"OCR"| B
+    D2["📊 EXCEL / PDF<br/>Arquivo com todos<br/>os funcionarios"] -.->|"Exportacao"| D
+
+    style A fill:#1e40af,stroke:#3b82f6,color:#fff
+    style B fill:#7e22ce,stroke:#a855f7,color:#fff
+    style C fill:#b45309,stroke:#f59e0b,color:#fff
+    style D fill:#059669,stroke:#34d399,color:#fff
+    style A2 fill:#064e3b,stroke:#34d399,color:#fff
+    style B2 fill:#4338ca,stroke:#818cf8,color:#fff
+    style D2 fill:#15803d,stroke:#22c55e,color:#fff
+        </div>
+    </div>
+
+    <!-- 9. COMO OS DADOS SE CONECTAM -->
+    <div class="section">
+        <h2>9. Como os Dados se Conectam</h2>
+        <p class="desc">Cada tela depende das anteriores. O cadastro alimenta o ponto, que alimenta o calculo.</p>
+        <div class="mermaid">
+graph TD
+    EMP["👤 Funcionarios<br/>Nome, cargo, matricula<br/>Empresa vinculada"]
+    TURNO["⏰ Turnos de Trabalho<br/>Horarios, tolerancias<br/>Regras do turno"]
+    JUST["📝 Justificativas<br/>Atestado, Chuva<br/>Dispensado, Sobreaviso"]
+
+    EMP -->|"cada funcionario<br/>tem um turno"| TURNO
+
+    EMP -->|"batidas do<br/>funcionario"| BATIDAS["📸 Batidas de Ponto<br/>Entrada/saida de cada dia<br/>Ate 3 pares por dia"]
+
+    JUST -->|"aplicada em<br/>dias de falta"| BATIDAS
+
+    BATIDAS -->|"batidas + turno<br/>+ feriados"| CALC["🧮 Calculo do Mes<br/>Horas trabalhadas<br/>Extras 50% e 100%<br/>Faltas e noturno"]
+
+    CALC -->|"resultado<br/>de cada dia"| REL["📊 Relatorio<br/>Cartao de ponto<br/>Impressao ou Excel"]
+
+    TURNO -->|"define o que<br/>era esperado"| CALC
+    JUST -->|"abona faltas<br/>no calculo"| CALC
+
+    FER["📅 Feriados<br/>Dias sem expediente<br/>100% se trabalhou"] -->|"identificados<br/>no calculo"| CALC
+
+    style EMP fill:#1e40af,stroke:#3b82f6,color:#fff
+    style TURNO fill:#b45309,stroke:#f59e0b,color:#fff
+    style JUST fill:#0369a1,stroke:#38bdf8,color:#fff
+    style BATIDAS fill:#7e22ce,stroke:#a855f7,color:#fff
+    style CALC fill:#059669,stroke:#34d399,color:#fff
+    style REL fill:#15803d,stroke:#22c55e,color:#fff
+    style FER fill:#dc2626,stroke:#ef4444,color:#fff
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                darkMode: true,
+                background: '#1e293b',
+                primaryColor: '#1e40af',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#3b82f6',
+                lineColor: '#64748b',
+                secondaryColor: '#7e22ce',
+                tertiaryColor: '#15803d',
+                fontFamily: 'Segoe UI, Arial, sans-serif',
+                fontSize: '13px',
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 12,
+            }
+        });
+    </script>
+</body>
+</html>

@@ -43,6 +43,13 @@ const SecurityAudit: React.FC = () => {
                 <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
                     <Activity size={16} /> Monitoramento em Tempo Real ({activeSessions.length} Online)
                 </h3>
+                {activeSessions.length === 0 && (
+                    <div className="bg-slate-900/50 border border-slate-800 border-dashed rounded-2xl p-8 text-center text-slate-500 text-sm">
+                        <Monitor size={32} className="mx-auto mb-3 text-slate-700" />
+                        <p className="font-bold text-slate-400">Monitoramento em tempo real indisponível</p>
+                        <p className="text-xs mt-1">Nenhuma sessão ativa encontrada no banco de dados.</p>
+                    </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {activeSessions.map(session => (
                         <div key={session.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all">

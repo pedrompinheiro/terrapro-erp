@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API_URL = 'http://localhost:8080';
-const API_KEY = 'terrapro123';
+const API_KEY = process.env.VITE_EVOLUTION_API_KEY || '';
 const INSTANCE_NAME = 'terrapro_bot';
 
 const api = axios.create({

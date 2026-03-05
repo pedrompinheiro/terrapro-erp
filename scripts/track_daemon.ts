@@ -22,11 +22,12 @@ const normalize = (s: string) => s ? s.replace(/[\s-]/g, '').toUpperCase() : '';
 
 // Fetch Positions (Standalone)
 async function fetchPositions() {
-    const url = `https://api.appselsyn.com.br/keek/rest/v1/integracao/operador/posicao`; // Hardcoded URL PROD for Daemon
+    // Documentação Selsyn: apikey como query parameter (não header)
+    const url = `https://api.appselsyn.com.br/keek/rest/v1/integracao/posicao?apikey=${selsynKey}`;
     try {
         const response = await fetch(url, {
             method: 'GET',
-            headers: { 'x-api-key': selsynKey, 'Accept': 'application/json' }
+            headers: { 'Accept': 'application/json' }
         });
         if (!response.ok) throw new Error(`Status ${response.status}`);
         const data: any = await response.json();
