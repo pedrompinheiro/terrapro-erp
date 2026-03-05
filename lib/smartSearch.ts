@@ -20,13 +20,20 @@ export const onlyDigits = (str: string): string => str.replace(/\D/g, '');
 export const similarity = (a: string, b: string): number => {
   if (a === b) return 1;
   if (!a || !b) return 0;
-  if (a.includes(b) || b.includes(a)) return 0.9;
 
   const la = a.length;
   const lb = b.length;
+  const minLen = Math.min(la, lb);
+  const maxLen = Math.max(la, lb);
 
-  // Otimização: se a diferença de tamanho é grande, não calcula
-  if (Math.abs(la - lb) > Math.max(la, lb) * 0.5) return 0;
+  // Substring match: só conta se a parte menor tem >= 3 chars
+  // e representa pelo menos 40% da maior (evita "e" matchando "dieselcom")
+  if (minLen >= 3 && (a.includes(b) || b.includes(a))) {
+    return 0.5 + 0.4 * (minLen / maxLen); // 0.5~0.9 proporcional ao tamanho
+  }
+
+  // Se as strings são muito diferentes em tamanho, não calcula Levenshtein
+  if (Math.abs(la - lb) > maxLen * 0.4) return 0;
 
   const matrix: number[][] = [];
   for (let i = 0; i <= la; i++) matrix[i] = [i];
@@ -41,7 +48,6 @@ export const similarity = (a: string, b: string): number => {
       );
     }
   }
-  const maxLen = Math.max(la, lb);
   return maxLen === 0 ? 1 : 1 - matrix[la][lb] / maxLen;
 };
 
@@ -55,15 +61,15 @@ export const fieldScore = (field: string | undefined | null, tokens: string[]): 
       // Match exato parcial — peso alto
       score += (token.length / Math.max(norm.length, 1)) * 10;
     } else {
-      // Fuzzy: checa cada palavra do campo
-      const words = norm.split(/\s+/);
+      // Fuzzy: checa cada palavra do campo (ignora palavras < 3 chars)
+      const words = norm.split(/\s+/).filter(w => w.length >= 3);
       let bestSim = 0;
       for (const word of words) {
         const sim = similarity(word, token);
         if (sim > bestSim) bestSim = sim;
       }
-      // Só conta se similaridade > 0.6 (tolera ~2 letras erradas em 5)
-      if (bestSim >= 0.6) score += bestSim * 5;
+      // Só conta se similaridade > 0.65 (tolera ~2 letras erradas em 6)
+      if (bestSim >= 0.65) score += bestSim * 5;
     }
   }
   return score;
