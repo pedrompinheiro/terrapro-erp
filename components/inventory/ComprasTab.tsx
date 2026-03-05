@@ -11,6 +11,7 @@ import {
   FileText, ClipboardList, Plus, Loader2, Save, Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/supabaseUtils';
 
 const PAGE_SIZE = 50;
 
@@ -157,8 +158,8 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
     setNewOrder({ supplier_name: '', supplier_phone: '', order_date: new Date().toISOString().split('T')[0], delivery_date: '', observations: '', payment_form: '', payment_conditions: '' });
     setNewOrderItems([{ description: '', unit: 'UN', quantity: 1, unit_cost: 0 }]);
     // Carregar fornecedores
-    const { data } = await supabase.from('entities').select('id, name, phone').order('name');
-    setSuppliers(data || []);
+    const data = await fetchAll<{ id: string; name: string; phone?: string }>('entities', { select: 'id, name, phone', order: { column: 'name' } });
+    setSuppliers(data);
     setNewOrderModal(true);
   };
 

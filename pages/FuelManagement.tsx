@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import { useQuery } from '@tanstack/react-query';
 import { fleetManagementService } from '../services/fleetService';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
 
 // Interfaces
 interface FuelTank {
@@ -85,10 +86,11 @@ const FuelManagement: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
 
   useEffect(() => {
-    supabase.from('entities').select('id, name')
-      .eq('is_supplier', true)
-      .order('name')
-      .then(({ data }) => setSuppliers(data || []));
+    fetchAll('entities', {
+      select: 'id, name',
+      order: { column: 'name' },
+      filters: (q: any) => q.eq('is_supplier', true)
+    }).then(data => setSuppliers(data));
 
     // Busca funcionários filtrados pela empresa do usuário (via Service)
     fleetManagementService.getEmployees()

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
 import { fleetManagementService } from '../services/fleetService';
 import { useQuery } from '@tanstack/react-query';
 import { Wrench, Calendar, AlertCircle, CheckCircle2, Clock, Plus, Columns, List as ListIcon, User, Save, Trash2, DollarSign, Package, FileText } from 'lucide-react';
@@ -92,7 +93,7 @@ const Maintenance: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
 
   useEffect(() => {
-    supabase.from('entities').select('id, name').then(({ data }) => setSuppliers(data || []));
+    fetchAll('entities', { select: 'id, name', order: { column: 'name' } }).then(data => setSuppliers(data));
     fleetManagementService.getEmployees().then(data => setEmployees(data)).catch(() => {});
   }, []);
 

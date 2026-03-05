@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
 
 // ============ TYPES ============
 
@@ -453,9 +454,7 @@ export async function fetchDocVersions(docId: string): Promise<DocVersion[]> {
 // ============ EMPLOYEES ============
 
 export async function fetchEmployees(): Promise<{ id: string; full_name: string; cpf?: string; job_title?: string }[]> {
-  const { data, error } = await supabase.from('employees').select('id, full_name, cpf, job_title, registration_number').order('full_name');
-  if (error) throw error;
-  return data || [];
+  return fetchAll('employees', { select: 'id, full_name, cpf, job_title, registration_number', order: { column: 'full_name' } });
 }
 
 // ============ ALERTS ============

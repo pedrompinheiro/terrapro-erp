@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, Building2, Briefcase, Search, Plus, Save, Edit, Trash2, X, Check, MapPin, DollarSign, WalletCards, Shield } from 'lucide-react';
 import Modal from '../components/Modal';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
 import { smartSearch } from '../lib/smartSearch';
 import EmployeeForm from '../components/hr/EmployeeForm';
 import WorkShiftForm from '../components/hr/WorkShiftForm';
@@ -112,38 +113,15 @@ const Registrations: React.FC = () => {
     // --- Fetchers ---
     const fetchEntities = async () => {
         setLoading(true);
-        // Supabase default limit = 1000. Com 8000+ registros, precisamos paginar.
-        const allEntities: Entity[] = [];
-        const PAGE_SIZE = 1000;
-        let from = 0;
-        let hasMore = true;
-
-        while (hasMore) {
-            const { data, error } = await supabase
-                .from('entities')
-                .select('*')
-                .order('name')
-                .range(from, from + PAGE_SIZE - 1);
-
-            if (error) { console.error(error); break; }
-            if (data && data.length > 0) {
-                allEntities.push(...data);
-                from += PAGE_SIZE;
-                hasMore = data.length === PAGE_SIZE;
-            } else {
-                hasMore = false;
-            }
-        }
-
+        const allEntities = await fetchAll<Entity>('entities', { order: { column: 'name' } });
         setEntities(allEntities);
         setLoading(false);
     };
 
     const fetchEmployees = async () => {
         setLoading(true);
-        const { data, error } = await supabase.from('employees').select('*, companies(name)').order('full_name');
-        if (error) console.error(error);
-        else setRealEmployees(data || []);
+        const data = await fetchAll('employees', { select: '*, companies(name)', order: { column: 'full_name' } });
+        setRealEmployees(data);
         setLoading(false);
     };
 
