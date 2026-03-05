@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Save, Calculator, CheckCircle, Lock, Unlock, Settings, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Plus, Save, Calculator, CheckCircle, Lock, Unlock, Settings, ArrowUpRight, ArrowDownLeft, Upload } from 'lucide-react';
 import Modal from '../components/Modal';
 import TransactionFormModal from '../components/TransactionFormModal';
+import ImportStatementModal from '../components/ImportStatementModal';
 
 import { receivableService, ContaReceber } from '../services/receivableService';
 import { paymentService, ContaPagar } from '../services/paymentService';
@@ -30,6 +31,7 @@ const Financial: React.FC = () => {
   const [isCostCenterModalOpen, setIsCostCenterModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Entidades e Centros de Custo
   const [entities, setEntities] = useState<{ id: string; name: string }[]>([]);
@@ -118,6 +120,7 @@ const Financial: React.FC = () => {
           costCenterGroup: r.centro_custo?.grupo_dre,
           costCenterName: r.centro_custo?.nome,
           rateioCount: rateioCountMap[r.id] || 0,
+          anexoUrl: r.anexo_url || undefined,
         });
       });
 
@@ -138,6 +141,7 @@ const Financial: React.FC = () => {
           costCenterGroup: p.centro_custo?.grupo_dre,
           costCenterName: p.centro_custo?.nome,
           rateioCount: rateioCountMap[p.id] || 0,
+          anexoUrl: p.anexo_url || undefined,
         });
       });
 
@@ -472,6 +476,13 @@ const Financial: React.FC = () => {
           >
             DRE
           </button>
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="px-3 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-bold text-sm shadow-lg transition flex items-center gap-1"
+            title="Importar Fatura CSV"
+          >
+            <Upload size={16} /> Importar
+          </button>
           <div className="flex gap-1">
             <button
               onClick={() => { setNewTransactionType('RECEBER'); setIsModalOpen(true); }}
@@ -536,6 +547,13 @@ const Financial: React.FC = () => {
         isOpen={isBankModalOpen}
         onClose={() => setIsBankModalOpen(false)}
         onRefresh={loadBankAccounts}
+      />
+
+      {/* ====== IMPORTAR FATURA CSV ====== */}
+      <ImportStatementModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => { setIsImportModalOpen(false); loadData(); }}
       />
 
       {/* ====== NOVO LANCAMENTO MODAL (com rateio) ====== */}

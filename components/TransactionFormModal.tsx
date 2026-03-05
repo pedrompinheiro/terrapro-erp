@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Save, Calendar, DollarSign, FileText, Repeat, Tag, Briefcase, Plus, Trash2, Percent, PieChart } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Save, Calendar, DollarSign, FileText, Repeat, Tag, Briefcase, Plus, Trash2, Percent, PieChart, Paperclip, ExternalLink } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { showToast } from '../lib/toast';
 
@@ -40,6 +40,10 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
         numero_documento: '',
         tipo_documento: 'AVULSO',
     });
+
+    // Anexo State
+    const [anexoFile, setAnexoFile] = useState<File | null>(null);
+    const anexoRef = useRef<HTMLInputElement>(null);
 
     // Rateio State
     const [useRateio, setUseRateio] = useState(false);
@@ -119,9 +123,10 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
     useEffect(() => {
         if (isOpen) {
             loadDependencies();
-            // Reset rateio
+            // Reset rateio e anexo
             setUseRateio(false);
             setRateioLines([]);
+            setAnexoFile(null);
         }
     }, [isOpen]);
 
@@ -222,6 +227,25 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
                 if (error) console.error('Erro ao salvar rateio:', error);
             };
 
+            // Upload anexo se houver
+            let anexoUrl: string | null = null;
+            if (anexoFile) {
+                const ext = anexoFile.name.split('.').pop() || 'pdf';
+                const path = `financial/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+                const { error: uploadErr } = await supabase.storage
+                    .from('integration-docs')
+                    .upload(path, anexoFile, { cacheControl: '3600', upsert: false });
+                if (!uploadErr) {
+                    const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(path);
+                    anexoUrl = urlData?.publicUrl || null;
+                }
+            }
+
+            // Adicionar anexo_url ao payload se disponível
+            if (anexoUrl) {
+                payload.anexo_url = anexoUrl;
+            }
+
             if (formData.recurrence === 'PARCELADO' && formData.installments > 1) {
                 const valorParcela = totalAmount / formData.installments;
 
@@ -229,7 +253,7 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
                     const dataBase = new Date(formData.due_date);
                     dataBase.setDate(dataBase.getDate() + (i * formData.interval));
 
-                    const { data: inserted, error } = await supabase.from(table).insert({
+                    const parcelaPayload = {
                         ...payload,
                         numero_titulo: `${payload.numero_titulo}-${i + 1}/${formData.installments}`,
                         descricao: `${payload.descricao} (${i + 1}/${formData.installments})`,
@@ -237,15 +261,42 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
                         data_vencimento: dataBase.toISOString().split('T')[0],
                         parcela_numero: i + 1,
                         parcela_total: formData.installments,
-                    }).select('id').single();
+                    };
 
-                    if (error) throw error;
+                    let inserted: any = null;
+                    const { data, error } = await supabase.from(table).insert(parcelaPayload).select('id').single();
+                    if (error) {
+                        // Se anexo_url não existe, tentar sem
+                        if (error.message?.includes('anexo_url')) {
+                            const { anexo_url, ...payloadSem } = parcelaPayload as any;
+                            const { data: d2, error: e2 } = await supabase.from(table).insert(payloadSem).select('id').single();
+                            if (e2) throw e2;
+                            inserted = d2;
+                        } else {
+                            throw error;
+                        }
+                    } else {
+                        inserted = data;
+                    }
+
                     if (inserted) await insertRateio(inserted.id, Math.round(valorParcela * 100) / 100);
                 }
                 showToast.success(`${formData.installments} parcelas geradas com sucesso!`);
             } else {
-                const { data: inserted, error } = await supabase.from(table).insert(payload).select('id').single();
-                if (error) throw error;
+                let inserted: any = null;
+                const { data, error } = await supabase.from(table).insert(payload).select('id').single();
+                if (error) {
+                    if (error.message?.includes('anexo_url')) {
+                        const { anexo_url, ...payloadSem } = payload as any;
+                        const { data: d2, error: e2 } = await supabase.from(table).insert(payloadSem).select('id').single();
+                        if (e2) throw e2;
+                        inserted = d2;
+                    } else {
+                        throw error;
+                    }
+                } else {
+                    inserted = data;
+                }
                 if (inserted) await insertRateio(inserted.id, totalAmount);
                 showToast.success('Lançamento salvo com sucesso!');
             }
@@ -596,6 +647,47 @@ const TransactionFormModal: React.FC<TransactionFormModalProps> = ({ isOpen, onC
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* Anexar Documento */}
+                    <div>
+                        <label className="block text-slate-400 text-xs uppercase font-bold mb-2">Anexar Documento</label>
+                        <div
+                            onClick={() => anexoRef.current?.click()}
+                            className={`flex items-center gap-3 p-3 rounded-lg border border-dashed cursor-pointer transition-all ${
+                                anexoFile
+                                    ? 'bg-blue-500/5 border-blue-500/40 hover:bg-blue-500/10'
+                                    : 'bg-slate-950 border-slate-700 hover:border-slate-500'
+                            }`}
+                        >
+                            <Paperclip size={18} className={anexoFile ? 'text-blue-400' : 'text-slate-600'} />
+                            {anexoFile ? (
+                                <div className="flex-1 min-w-0">
+                                    <span className="text-sm text-blue-300 font-bold truncate block">{anexoFile.name}</span>
+                                    <span className="text-xs text-slate-500">{(anexoFile.size / 1024).toFixed(0)} KB • Clique para trocar</span>
+                                </div>
+                            ) : (
+                                <div className="flex-1">
+                                    <span className="text-sm text-slate-500">Clique para anexar PDF, imagem ou planilha</span>
+                                </div>
+                            )}
+                            {anexoFile && (
+                                <button
+                                    type="button"
+                                    onClick={e => { e.stopPropagation(); setAnexoFile(null); }}
+                                    className="p-1 text-slate-600 hover:text-red-400 transition"
+                                >
+                                    <X size={14} />
+                                </button>
+                            )}
+                        </div>
+                        <input
+                            ref={anexoRef}
+                            type="file"
+                            accept=".pdf,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.doc,.docx"
+                            onChange={e => { if (e.target.files?.[0]) setAnexoFile(e.target.files[0]); }}
+                            className="hidden"
+                        />
                     </div>
 
                     {/* Observação */}
