@@ -127,9 +127,11 @@ export const inventoryService = {
   },
 
   createItem: async (item: Partial<InventoryItem>): Promise<InventoryItem | null> => {
+    // Remover campos computados que não existem na tabela
+    const { status, ...cleanItem } = item as any;
     const { data, error } = await supabase
       .from('inventory_items')
-      .insert(item)
+      .insert(cleanItem)
       .select()
       .single();
 
@@ -142,9 +144,11 @@ export const inventoryService = {
   },
 
   updateItem: async (id: string, updates: Partial<InventoryItem>): Promise<InventoryItem | null> => {
+    // Remover campos computados que não existem na tabela
+    const { status, ...cleanUpdates } = updates as any;
     const { data, error } = await supabase
       .from('inventory_items')
-      .update(updates)
+      .update(cleanUpdates)
       .eq('id', id)
       .select()
       .single();
