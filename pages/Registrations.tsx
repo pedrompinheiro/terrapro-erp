@@ -47,6 +47,7 @@ interface Entity {
     // Comum
     email?: string;
     phone?: string;
+    phone2?: string;
     website?: string;
 
     zip_code?: string;
@@ -63,6 +64,8 @@ interface Entity {
     contacts?: { name: string; role: string; email?: string; phone?: string }[];
 
     active?: boolean;
+    legacy_code?: string;
+    created_at?: string;
 }
 
 const Registrations: React.FC = () => {
@@ -284,10 +287,49 @@ const Registrations: React.FC = () => {
     };
 
     const handleDeleteEntity = async (id: string) => {
-        if (!window.confirm("ATENÇÃO: Deseja excluir este cadastro?")) return;
-        const { error } = await supabase.from('entities').delete().eq('id', id);
-        if (error) alert(error.message);
-        else fetchEntities();
+        // Verificar se a entidade tem referências em outras tabelas
+        const fkChecks = [
+            { table: 'contas_receber', column: 'cliente_id', label: 'Contas a Receber' },
+            { table: 'contas_pagar', column: 'fornecedor_id', label: 'Contas a Pagar' },
+            { table: 'purchase_orders', column: 'supplier_id', label: 'Pedidos de Compra' },
+            { table: 'inventory_movements', column: 'entity_id', label: 'Movimentações de Estoque' },
+            { table: 'inventory_supplier_products', column: 'supplier_id', label: 'Produtos de Fornecedor' },
+            { table: 'fuel_records', column: 'supplier_id', label: 'Registros de Combustível' },
+        ];
+
+        const refs: string[] = [];
+        await Promise.all(fkChecks.map(async (fk) => {
+            try {
+                const { count } = await supabase
+                    .from(fk.table)
+                    .select('id', { count: 'exact', head: true })
+                    .eq(fk.column, id);
+                if (count && count > 0) {
+                    refs.push(`• ${fk.label}: ${count} registro(s)`);
+                }
+            } catch { /* tabela pode não existir */ }
+        }));
+
+        if (refs.length > 0) {
+            // Tem referências — não pode excluir, apenas inativar
+            const entity = entities.find(e => e.id === id);
+            const msg = `⚠️ Este cadastro não pode ser excluído!\n\n"${entity?.name}" possui vínculos:\n${refs.join('\n')}\n\nDeseja INATIVAR este cadastro?`;
+            if (!window.confirm(msg)) return;
+
+            const { error } = await supabase.from('entities').update({ active: false }).eq('id', id);
+            if (error) {
+                alert('Erro ao inativar: ' + error.message);
+            } else {
+                alert('✅ Cadastro inativado com sucesso!');
+                fetchEntities();
+            }
+        } else {
+            // Sem referências — pode excluir
+            if (!window.confirm("Deseja excluir este cadastro permanentemente?\n\nEsta ação não pode ser desfeita.")) return;
+            const { error } = await supabase.from('entities').delete().eq('id', id);
+            if (error) alert('Erro ao excluir: ' + error.message);
+            else fetchEntities();
+        }
     };
 
     const handleEditEntity = (e: Entity) => {
@@ -479,11 +521,12 @@ const Registrations: React.FC = () => {
                             <tr>
                                 {(activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') && (
                                     <>
-                                        <th className="px-8 py-4">Parceiro</th>
-                                        <th className="px-8 py-4">Documento</th>
-                                        <th className="px-8 py-4">Endereço</th>
-                                        <th className="px-8 py-4">Contato</th>
-                                        {activeTab === 'SUPPLIERS' && <th className="px-8 py-4">Categoria</th>}
+                                        <th className="px-4 py-4 w-20">Cód</th>
+                                        <th className="px-6 py-4">Parceiro</th>
+                                        <th className="px-6 py-4">Documento</th>
+                                        <th className="px-6 py-4">Endereço</th>
+                                        <th className="px-6 py-4">Contato</th>
+                                        {activeTab === 'SUPPLIERS' && <th className="px-6 py-4">Categoria</th>}
                                     </>
                                 )}
                                 {activeTab === 'EMPLOYEES' && (
@@ -516,26 +559,31 @@ const Registrations: React.FC = () => {
                             {/* CLIENTS & SUPPLIERS ROWS */}
                             {(activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') && getFilteredEntities(activeTab === 'CLIENTS' ? 'CLIENT' : 'SUPPLIER').map(e => (
                                 <tr key={e.id} className="hover:bg-slate-800/30 transition-colors">
-                                    <td className="px-8 py-5">
+                                    <td className="px-4 py-5">
+                                        <span className="text-amber-400 font-bold font-mono text-xs">
+                                            {e.legacy_code || e.id.slice(0, 6).toUpperCase()}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-5">
                                         <div className="font-bold text-white uppercase flex items-center gap-2">
                                             {e.name}
-                                            {/* Badge se for ambos */}
                                             {e.is_client && e.is_supplier && <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">HÍBRIDO</span>}
+                                            {e.active === false && <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">INATIVO</span>}
                                         </div>
                                         <div className="text-[10px] text-slate-500 font-mono">{e.social_reason || e.name}</div>
                                     </td>
-                                    <td className="px-8 py-5 text-slate-400 font-mono text-xs">{e.document || '-'}</td>
-                                    <td className="px-8 py-5 text-slate-400 text-xs">
+                                    <td className="px-6 py-5 text-slate-400 font-mono text-xs">{e.document || '-'}</td>
+                                    <td className="px-6 py-5 text-slate-400 text-xs">
                                         {e.city ? `${e.city}/${e.state || ''}` : '-'}
                                     </td>
-                                    <td className="px-8 py-5 text-slate-300">
+                                    <td className="px-6 py-5 text-slate-300">
                                         <div className="flex flex-col">
                                             <span className="text-xs">{e.email}</span>
                                             <span className="text-[10px] text-slate-500">{e.phone}</span>
                                         </div>
                                     </td>
-                                    {activeTab === 'SUPPLIERS' && <td className="px-8 py-5 text-slate-400 text-xs">{e.supplier_category || '-'}</td>}
-                                    <td className="px-8 py-5 text-right">
+                                    {activeTab === 'SUPPLIERS' && <td className="px-6 py-5 text-slate-400 text-xs">{e.supplier_category || '-'}</td>}
+                                    <td className="px-6 py-5 text-right">
                                         <div className="flex justify-end gap-2">
                                             <button onClick={() => handleEditEntity(e)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><Edit size={16} /></button>
                                             <button onClick={() => handleDeleteEntity(e.id)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
