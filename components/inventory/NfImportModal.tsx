@@ -5,6 +5,7 @@ import Modal from '../Modal';
 import { Upload, FileText, Search, CheckCircle, AlertTriangle, X, ChevronRight, Loader2, Link, Package, Download } from 'lucide-react';
 import { showToast } from '../../lib/toast';
 import { supabase } from '../../lib/supabase';
+import { generateWithImage, generateText } from '../../lib/aiService';
 
 // ============================================================
 // TYPES
@@ -264,20 +265,64 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
         setParsedData(data);
         setStep(2);
       } else if ((fileType === 'PDF' || fileType === 'IMAGE') && fileContent) {
-        // Call nfe-parser Edge Function
-        const { data: fnData, error: fnError } = await supabase.functions.invoke('nfe-parser', {
-          body: {
-            type: fileType === 'PDF' ? 'pdf' : 'image',
-            content: fileContent,
-            file_name: fileName,
-          },
-        });
+        // Tentar Edge Function primeiro, com fallback para IA client-side
+        let parsed: any = null;
+        let confidence = 0;
+        let usedFallback = false;
 
-        if (fnError || !fnData?.success) {
-          throw new Error(fnData?.error || fnError?.message || 'Erro ao processar arquivo');
+        try {
+          const { data: fnData, error: fnError } = await supabase.functions.invoke('nfe-parser', {
+            body: {
+              type: fileType === 'PDF' ? 'pdf' : 'image',
+              content: fileContent,
+              file_name: fileName,
+            },
+          });
+
+          if (fnError || !fnData?.success) {
+            throw new Error(fnData?.error || fnError?.message || 'Edge Function falhou');
+          }
+
+          parsed = fnData.data;
+          confidence = fnData.confidence || 75;
+        } catch (edgeFnErr: any) {
+          // Fallback: chamar IA diretamente do browser
+          console.warn('Edge Function falhou, usando fallback client-side:', edgeFnErr.message);
+
+          const NF_PROMPT = `Voce e um assistente que extrai dados de Notas Fiscais brasileiras.
+Analise o conteudo abaixo e retorne APENAS um JSON com a seguinte estrutura:
+{
+  "supplier_name": "nome do fornecedor/emitente",
+  "supplier_cnpj": "CNPJ",
+  "invoice_number": "numero da NF",
+  "serie": "serie",
+  "chave_nfe": "chave de acesso 44 digitos se visivel",
+  "issue_date": "YYYY-MM-DD",
+  "total": 0.00,
+  "items": [{"description":"","ncm":"","cfop":"","ean":"","unit":"UN","qty":0,"unit_cost":0,"total":0}]
+}
+Retorne SOMENTE o JSON, sem markdown ou explicacao.`;
+
+          let aiResult: string | null = null;
+          const mimeType = fileType === 'PDF' ? 'application/pdf' : 'image/jpeg';
+
+          try {
+            aiResult = await generateWithImage(NF_PROMPT, fileContent, mimeType);
+          } catch {
+            // Se vision falhar, tentar como texto
+            aiResult = await generateText(`${NF_PROMPT}\n\nConteudo do documento (base64 ${mimeType}):\n${fileContent.substring(0, 5000)}`);
+          }
+
+          if (!aiResult) throw new Error('IA nao retornou resposta. Verifique a API key em Configuracoes.');
+
+          const jsonMatch = aiResult.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error('IA nao retornou JSON valido');
+
+          parsed = JSON.parse(jsonMatch[0]);
+          confidence = fileType === 'PDF' ? 70 : 55;
+          usedFallback = true;
         }
 
-        const parsed = fnData.data;
         const data: ParsedNfeData = {
           supplier: parsed.supplier_name || '',
           supplierCnpj: parsed.supplier_cnpj || '',
@@ -307,7 +352,7 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
             const match = await inventoryService.matchProductByEan(item.ean);
             if (match) {
               item.matchedItem = match;
-              item.matchConfidence = 'MEDIUM'; // Lower than XML since AI-extracted
+              item.matchConfidence = usedFallback ? 'LOW' : 'MEDIUM';
               item.needs_review = true;
               continue;
             }
@@ -320,7 +365,7 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
           }
         }
 
-        showToast.success(`NF processada via ${fileType === 'PDF' ? 'PDF' : 'Imagem'} (confianca: ${fnData.confidence}%)`);
+        showToast.success(`NF processada via ${fileType === 'PDF' ? 'PDF' : 'Imagem'}${usedFallback ? ' (fallback IA)' : ''} (confianca: ${confidence}%)`);
         setParsedData(data);
         setStep(2);
       } else if (chaveManual && chaveManual.length === 44) {
@@ -357,7 +402,9 @@ const NfImportModal: React.FC<NfImportModalProps> = ({ isOpen, onClose, onImport
         body: { action: 'consultaChNFe', chave: chaveManual },
       });
 
-      if (fnError) throw new Error(fnError.message || 'Erro ao chamar Edge Function');
+      if (fnError) throw new Error(fnError.message?.includes('Failed to send')
+        ? 'Consulta SEFAZ indisponivel. Verifique se o certificado digital esta configurado em Configuracoes.'
+        : (fnError.message || 'Erro ao chamar Edge Function'));
       if (!fnData?.success) throw new Error(fnData?.error || 'Erro na consulta SEFAZ');
 
       const parsed = fnData.data;
