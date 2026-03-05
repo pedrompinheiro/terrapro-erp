@@ -205,25 +205,60 @@ const Registrations: React.FC = () => {
             return alert('Selecione pelo menos um papel: Cliente ou Fornecedor.');
         }
 
-        const payload = { ...entityForm };
-        if (!payload.document) delete payload.document;
-        if (!payload.email) delete payload.email;
+        // Build payload only with valid DB columns (avoid sending unknown fields)
+        const payload: Record<string, any> = {};
+        const validFields = [
+            'is_client', 'is_supplier', 'type', 'name', 'social_reason', 'document',
+            'state_registration', 'municipal_registration', 'birth_date',
+            'supplier_category', 'credit_limit', 'credit_rating',
+            'email', 'phone', 'website',
+            'zip_code', 'street', 'number', 'complement', 'neighborhood', 'city', 'state',
+            'payment_terms', 'notes', 'contacts', 'active',
+        ];
+
+        for (const key of validFields) {
+            const val = (entityForm as any)[key];
+            if (val !== undefined && val !== '') {
+                payload[key] = val;
+            }
+        }
+
+        // Ensure required fields
+        payload.is_client = entityForm.is_client || false;
+        payload.is_supplier = entityForm.is_supplier || false;
+        payload.name = entityForm.name;
         if (!payload.contacts) payload.contacts = [];
+        if (payload.active === undefined) payload.active = true;
+
+        // Clean numeric fields (avoid NaN)
+        if (payload.credit_limit !== undefined) {
+            payload.credit_limit = Number(payload.credit_limit) || 0;
+        }
+
+        // Ensure document is cleaned (remove mask chars for storage)
+        if (payload.document) {
+            payload.document = payload.document.trim();
+        }
+
+        console.log('[SAVE ENTITY] payload:', JSON.stringify(payload, null, 2));
 
         try {
             if (editingEntityId) {
-                const { error } = await supabase.from('entities').update(payload).eq('id', editingEntityId);
+                const { data, error } = await supabase.from('entities').update(payload).eq('id', editingEntityId).select();
+                console.log('[SAVE ENTITY] update result:', { data, error });
                 if (error) throw error;
                 alert('Cadastro atualizado com sucesso!');
             } else {
-                const { error } = await supabase.from('entities').insert(payload);
+                const { data, error } = await supabase.from('entities').insert(payload).select();
+                console.log('[SAVE ENTITY] insert result:', { data, error });
                 if (error) throw error;
                 alert('Cadastro realizado com sucesso!');
             }
             setIsModalOpen(false);
             fetchEntities();
         } catch (e: any) {
-            alert('Erro ao salvar: ' + e.message);
+            console.error('[SAVE ENTITY] ERROR:', e);
+            alert('Erro ao salvar: ' + (e.message || e.details || JSON.stringify(e)));
         }
     };
 

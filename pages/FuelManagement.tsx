@@ -86,7 +86,8 @@ const FuelManagement: React.FC = () => {
 
   useEffect(() => {
     supabase.from('entities').select('id, name')
-      // Busca generica pois 'is_supplier' pode nao existir ou ser diferente
+      .eq('is_supplier', true)
+      .order('name')
       .then(({ data }) => setSuppliers(data || []));
 
     // Busca funcionários filtrados pela empresa do usuário (via Service)

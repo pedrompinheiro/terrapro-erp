@@ -1,7 +1,7 @@
 # CONTEXTO DO PROJETO TERRAPRO ERP - SESSAO ATIVA
 
 > **IMPORTANTE**: Este arquivo deve ser lido no inicio de cada sessao para recuperar o contexto.
-> Ultima atualizacao: 2026-03-03
+> Ultima atualizacao: 2026-03-04
 
 ---
 
@@ -79,8 +79,21 @@
   - Banco: tabela `absence_justifications` (Atestado, Chuva, Dispensado, Sobreaviso)
   - Banco: coluna `justification2` em `time_entries` para periodo 2
 
-### 7. Financeiro
-- **Pagina**: `pages/Financial.tsx`
+### 7. Financeiro — FASE 1 COMPLETA (Sessao 2026-03-04)
+- **Pagina**: `pages/Financial.tsx` — Reescrito como container modular (~430 linhas vs 1523 original)
+- **5 Sub-componentes extraidos**:
+  - `pages/FinancialDashboard.tsx` — Painel principal
+  - `pages/FinancialSettle.tsx` — Baixa de titulos
+  - `pages/FinancialDRE.tsx` — Demonstracao de resultados
+  - `pages/FinancialCostCenters.tsx` — Centros de custo
+  - `pages/FinancialBanks.tsx` — Contas bancarias
+- **4 Novos servicos**:
+  - `services/adminSecurityService.ts` — Verificacao de senha admin (Edge Function)
+  - `services/formasPagamentoService.ts` — CRUD formas de pagamento
+  - `services/planoContasService.ts` — Plano de contas gerencial
+  - `services/transferenciaService.ts` — Transferencias entre contas
+- **Edge Function**: `supabase/functions/verify-admin-password/index.ts` — Deployada
+- **SQL**: `migrations/20260303_fase1_fundacao.sql` — DDL completa (497 linhas)
 - **Pagina**: `pages/Billing.tsx` - Faturamento
 - **Servicos**: bankService.ts, bankingService.ts, cnabService.ts, paymentService.ts, receivableService.ts
 - **SQL**: `sql/setup_financeiro_completo.sql`, `sql/seed_bank_accounts.sql`, `sql/migrate_centros_custo_dre.sql`
@@ -132,6 +145,7 @@
 | gps-processor | Pendente deploy (endpoint corrigido) |
 | nfe-consulta | Deployada |
 | nfe-parser | Deployada |
+| verify-admin-password | Deployada (2026-03-04) |
 
 ---
 
@@ -202,13 +216,33 @@
 
 ---
 
-## COMO RODAR
+## DEPLOY / HOSTING
 
+### Producao: HostGator (www.terramaquinas.com.br)
+- **Tipo**: Hospedagem cPanel (arquivos estaticos)
+- **Processo de deploy**:
+  1. `npm run build` — gera pasta `dist/`
+  2. Adicionar `.htaccess` na dist (SPA routing + cache + gzip)
+  3. Zipar: `cd dist && zip -r terrapro-deploy.zip .`
+  4. Upload via cPanel > Gerenciador de Arquivos > `public_html`
+  5. Extrair o zip por cima
+
+### Desenvolvimento local
 ```bash
 npm install
 npm run dev
 # Acessa em http://localhost:3000
 # Precisa do .env.local com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
+```
+
+### .htaccess necessario no dist/
+```apache
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.html$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.html [L]
 ```
 
 ---
@@ -240,3 +274,105 @@ npm run dev
 - Espelho de Ponto (Portaria 1510) — identificado como faltante vs Secullum, nao solicitado
 - Faixas adicionais de HE (Ex75%) e ExNot (hora extra noturna separada) — Secullum tem, nao implementado
 - Adin./Atras. (adicional/atraso) tracking por dia — Secullum tem, nao implementado
+
+---
+
+## SESSAO 2026-03-04 — RESUMO DE ALTERACOES
+
+### Branch: `claude/strange-poincare` (merge com `distracted-edison`)
+
+**Commits realizados:**
+1. `3a15fed` — Fase 1 Financeiro + eliminar dados mocados + recalcular ponto
+2. `a41bb55` — Merge claude/distracted-edison (35 commits)
+
+**O que foi feito nesta sessao:**
+
+### 1. Fase 1 Modulo Financeiro
+- Reescrita completa do `Financial.tsx` como container modular (~430 linhas vs 1523)
+- 5 sub-componentes extraidos (Dashboard, Settle, DRE, CostCenters, Banks)
+- 4 novos servicos Supabase (adminSecurity, formasPagamento, planoContas, transferencia)
+- Migracao SQL `20260303_fase1_fundacao.sql` (497 linhas)
+- Edge Function `verify-admin-password` deployada no Supabase
+
+### 2. Eliminacao de TODOS os dados mocados
+- `services/http/httpClient.ts` — `USE_MOCK = false`
+- `services/api.ts` — Reescrita completa: removidas 10 arrays MOCK_*, todas funcoes agora consultam Supabase
+  - `getAssets()` → `supabase.from('assets')`
+  - `getMaintenanceOS()` → `supabase.from('maintenance_os')` com join assets
+  - `getDocuments()` → `supabase.from('documents')` com mapeamento ERPDocument
+  - `getAuditLogs()` → `supabase.from('financial_audit_log')`
+  - `getStats()` → Agregacoes reais de assets, maintenance_os, movimentos_bancarios
+  - `getActivities()` → Ultimas 10 entradas de financial_audit_log
+  - `getHRPayroll()` → `supabase.from('employees')`
+- `pages/Dashboard.tsx` — Stats dinamicos do banco, DashboardAlerts com queries reais (OS pendentes, titulos vencidos), feed de atividades com empty state
+- `pages/SecurityAudit.tsx` — Empty state para sessoes ativas
+
+### 3. Botao "Recalcular Periodo" no RH
+- `pages/HRManagement.tsx` — Botao amber que recalcula totalHours de todos os registros visiveis na tela
+- Usa `calculateTimeDiff()` e `formatMinutesToHHMM()` existentes
+- Upsert com status 'RECALCULADO' no Supabase
+- Confirmacao com contagem e range de datas
+
+### 4. Multi-provider IA (merge do distracted-edison)
+- `lib/aiService.ts` — Suporta OpenAI (gpt-4o-mini), Gemini (2.5-flash), Groq (llama-3.3-70b)
+- `lib/getGeminiKey.ts` — Busca chave de `system_settings` com cache de 5 min, fallback .env.local
+- `services/TimecardService.ts` — OCR usando aiService (le chave das Configuracoes, nao mais .env.local)
+- `lib/geminiService.ts` — Analise de frota via aiService
+- **Chave Gemini agora lida das Configuracoes** (tela Settings > Google Gemini AI), nao precisa mais do .env.local
+
+### 5. Correcao do calculo de ponto (tolerancia)
+- `services/timecardCalculator.ts` — Removida tolerancia que descontava 5min de toda hora extra
+- **Antes**: `overtimeMin = diff - shift.tolerance_overtime` (roubava 5 min)
+- **Depois**: `overtimeMin = diff` (toda hora extra conta integralmente)
+- Mesma correcao para faltas: `absenceMin = Math.abs(diff)` (sem tolerancia)
+
+### 6. Deploy em producao (HostGator)
+- Site online em **www.terramaquinas.com.br**
+- Build estatico via `npm run build` (3.4MB)
+- Upload via cPanel (zip + extract em public_html)
+- `.htaccess` configurado para SPA routing + cache + gzip
+
+### 7. Sincronizacao de branches
+- Merge do `distracted-edison` no `strange-poincare` — trouxe 35 commits incluindo:
+  - TimecardCalc completo (XLSX, relatorio em lote, justificativas, HE 50%/100%)
+  - OCR com seletor mes/ano e confirmacao de data
+  - TimeInput com mascara HH:MM
+  - WhatsApp automacao
+  - Integracoes v2
+  - OS Oficina (ServiceOrderFormModal)
+  - Diversos fixes
+
+**Arquivos chave modificados/criados nesta sessao:**
+| Arquivo | Acao |
+|---------|------|
+| pages/Financial.tsx | Reescrito (container modular) |
+| pages/Financial{Dashboard,Settle,DRE,CostCenters,Banks}.tsx | Novos |
+| services/{adminSecurity,formasPagamento,planoContas,transferencia}Service.ts | Novos |
+| services/api.ts | Reescrito (100% Supabase) |
+| services/http/httpClient.ts | USE_MOCK = false |
+| services/timecardCalculator.ts | Fix tolerancia HE |
+| pages/Dashboard.tsx | Stats + alertas dinamicos |
+| pages/HRManagement.tsx | Botao Recalcular Periodo |
+| pages/SecurityAudit.tsx | Empty state sessoes |
+| lib/aiService.ts | Multi-provider IA (merge) |
+| lib/getGeminiKey.ts | Chave do system_settings (merge) |
+| services/TimecardService.ts | OCR via aiService (merge) |
+| pages/TimecardCalc.tsx | Relatorio completo (merge) |
+| pages/Timekeeping.tsx | Seletor mes/ano OCR (merge) |
+| components/TimeInput.tsx | Mascara HH:MM (merge) |
+| migrations/20260303_fase1_fundacao.sql | DDL Financeiro |
+| supabase/functions/verify-admin-password/index.ts | Edge Function |
+
+**Erros encontrados e resolvidos:**
+- Write tool "File has not been read yet" — workaround com Bash heredoc
+- ERPDocument type mismatch (name→title, size→fileSize) — corrigido mapeamento
+- .env.local ausente no worktree — copiado do repo principal
+- Edge Function deploy falhando — file nao estava no repo principal, copiado e deployado
+- launch.json porta errada (5173→3000) — corrigido
+- Gemini 1.5-flash descontinuado → atualizado para 2.5-flash via aiService
+- Tolerancia de HE descontando 5min → removida
+
+**Supabase project ref**: `xpufmosdhhemcubzswcv`
+**Vite dev port**: 3000
+**Worktree path**: `/Users/pedromi/Downloads/terrapro-erp---gestão-de-ativos/.claude/worktrees/strange-poincare/`
+**Main repo path**: `/Users/pedromi/Downloads/terrapro-erp---gestão-de-ativos/`

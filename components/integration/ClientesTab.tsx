@@ -221,7 +221,7 @@ const NewTemplateModal: React.FC<{ onClose: () => void; onCreated: () => void }>
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<NodeJS.Timeout>(undefined);
 
   const searchEntities = async (query: string) => {
     if (query.length < 2) { setSuggestions([]); setShowSuggestions(false); return; }

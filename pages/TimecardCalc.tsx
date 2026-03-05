@@ -1110,7 +1110,7 @@ const TimecardCalc: React.FC = () => {
 
                                         {/* Botões de ação */}
                                         <div className="flex gap-2 pt-1">
-                                            <button onClick={handleCalculate} disabled={calculating}
+                                            <button onClick={() => handleCalculate()} disabled={calculating}
                                                 className={`px-5 py-2.5 rounded-xl bg-blue-600 text-white font-bold flex items-center gap-2 hover:bg-blue-500 transition-all text-sm ${calculating ? 'opacity-50 cursor-wait' : ''}`}>
                                                 {calculating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                                                 Calcular
@@ -1529,7 +1529,7 @@ const TimecardCalc: React.FC = () => {
                                                 <p className="text-sm text-slate-600 mb-6">
                                                     Clique em "Calcular" para processar o ponto de {MONTHS[month - 1]}/{year}
                                                 </p>
-                                                <button onClick={handleCalculate}
+                                                <button onClick={() => handleCalculate()}
                                                     className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold flex items-center gap-2 hover:bg-blue-500 transition-all mx-auto">
                                                     <Calculator size={16} />
                                                     Calcular Ponto

@@ -541,26 +541,14 @@ export const calculateDay = (
         overtimeMin = workedMin;
         absenceMin = 0;
     } else if (diff >= 0) {
-        // Trabalhou mais ou igual ao esperado
-        if (diff <= shift.tolerance_overtime) {
-            // Dentro da tolerância — não conta extra
-            normalMin = expectedMin;
-            overtimeMin = 0;
-        } else {
-            normalMin = expectedMin;
-            overtimeMin = diff - shift.tolerance_overtime;
-        }
+        // Trabalhou mais ou igual ao esperado — toda hora extra conta
+        normalMin = expectedMin;
+        overtimeMin = diff;
         absenceMin = 0;
     } else {
-        // Trabalhou menos que o esperado
-        if (Math.abs(diff) <= shift.tolerance_absence) {
-            // Dentro da tolerância — não desconta
-            normalMin = expectedMin;
-            absenceMin = 0;
-        } else {
-            normalMin = workedMin;
-            absenceMin = Math.abs(diff) - shift.tolerance_absence;
-        }
+        // Trabalhou menos que o esperado — toda falta conta
+        normalMin = workedMin;
+        absenceMin = Math.abs(diff);
         overtimeMin = 0;
     }
 

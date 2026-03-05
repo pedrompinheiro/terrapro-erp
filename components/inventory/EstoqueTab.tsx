@@ -3,9 +3,11 @@ import { InventoryItem, InventoryCategory, InventoryBrand } from '../../types';
 import {
   Search, Plus, Filter, Download, Image as ImageIcon,
   Camera, Save, Package, Wrench, Trash2, ChevronLeft, ChevronRight,
-  X, DollarSign, MapPin, BarChart3, Box,
+  X, DollarSign, MapPin, BarChart3, Box, Sparkles, Upload, Loader2, RefreshCw,
 } from 'lucide-react';
 import { inventoryService } from '../../services/inventoryService';
+import { supabase } from '../../lib/supabase';
+import { getSettingValue } from '../../lib/getGeminiKey';
 import Modal from '../Modal';
 import ItemMovementHistory from './ItemMovementHistory';
 
@@ -35,6 +37,94 @@ const EstoqueTab: React.FC<EstoqueTabProps> = ({ categories, brands, onRefresh }
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Image states
+  const [searchingImage, setSearchingImage] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const photo2Ref = React.useRef<HTMLInputElement>(null);
+
+  // Buscar imagem via Gemini AI (gera URL de busca de imagem)
+  const searchProductImage = async () => {
+    const desc = formData.description || editingItem?.description;
+    const brand = formData.brand_name || editingItem?.brand_name;
+    const sku = formData.sku || editingItem?.sku;
+    if (!desc) return alert('Preencha a descrição do produto primeiro');
+
+    setSearchingImage(true);
+    try {
+      const apiKey = await getSettingValue('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) return alert('Configure a chave Google AI em Configurações');
+
+      const prompt = `Você é um assistente de busca de imagens de produtos industriais/peças/ferramentas.
+Dado o produto abaixo, retorne APENAS uma URL direta de imagem JPG ou PNG que represente este produto.
+A URL deve ser de um site público confiável (ex: images.tcdn.com.br, cdn.leroymerlin.com.br, images-americanas.com, m.media-amazon.com, etc).
+Retorne APENAS a URL, sem explicação, sem markdown.
+
+Produto: ${desc}
+${brand ? `Marca: ${brand}` : ''}
+${sku ? `SKU/Ref: ${sku}` : ''}`;
+
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3 },
+          }),
+        }
+      );
+
+      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+
+      const data = await resp.json();
+      const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+
+      // Extrair URL da resposta
+      const urlMatch = text.match(/https?:\/\/[^\s"'<>]+\.(jpg|jpeg|png|webp)/i);
+      if (urlMatch) {
+        setFormData(prev => ({ ...prev, photo_1_url: urlMatch[0] }));
+      } else {
+        // Fallback: gerar URL de placeholder
+        const query = encodeURIComponent(`${desc} ${brand || ''}`);
+        setFormData(prev => ({ ...prev, photo_1_url: `https://via.placeholder.com/400x400/1e293b/94a3b8?text=${encodeURIComponent(desc.slice(0, 25))}` }));
+        alert('IA não encontrou imagem direta. Placeholder adicionado — tente "Buscar outra" ou faça upload manual.');
+      }
+    } catch (err) {
+      console.error('Erro na busca de imagem:', err);
+      alert('Erro ao buscar imagem: ' + (err as Error).message);
+    } finally {
+      setSearchingImage(false);
+    }
+  };
+
+  // Upload manual de foto 2
+  const handlePhoto2Upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const fileName = `products/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+      const { error } = await supabase.storage.from('integration-docs').upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(fileName);
+      setFormData(prev => ({ ...prev, photo_2_url: urlData.publicUrl }));
+    } catch (err) {
+      console.error('Erro no upload:', err);
+      alert('Erro ao fazer upload: ' + (err as Error).message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   // Form state
   const [formData, setFormData] = useState<Partial<InventoryItem>>({
@@ -436,15 +526,61 @@ const EstoqueTab: React.FC<EstoqueTabProps> = ({ categories, brands, onRefresh }
         <div className="flex gap-6">
           {/* Left Column - Photos + Info */}
           <div className="w-1/3 space-y-4">
-            {/* Photo placeholders */}
+            {/* Photos - Foto 1 (IA) + Foto 2 (Upload) */}
             <div className="grid grid-cols-2 gap-2">
-              <div className="aspect-square bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-blue-500 hover:text-blue-500 transition-all cursor-pointer">
-                <Camera size={28} className="mb-1 opacity-50" />
-                <span className="text-[9px] font-bold uppercase">Foto 1</span>
+              {/* Foto 1 — Busca IA */}
+              <div className="relative group">
+                {formData.photo_1_url ? (
+                  <div className="aspect-square bg-slate-950 border border-slate-700 rounded-xl overflow-hidden relative">
+                    <img src={formData.photo_1_url} alt="Foto 1" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    <button onClick={searchProductImage} disabled={searchingImage}
+                      className="absolute bottom-1 right-1 p-1.5 bg-slate-900/90 hover:bg-blue-600 text-white rounded-lg transition-all text-[9px] flex items-center gap-1">
+                      {searchingImage ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    </button>
+                    <button onClick={() => setFormData(prev => ({ ...prev, photo_1_url: '' }))}
+                      className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-500 text-white rounded-lg">
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={searchProductImage} disabled={searchingImage}
+                    className="aspect-square w-full bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-purple-500 hover:text-purple-400 transition-all cursor-pointer">
+                    {searchingImage ? (
+                      <Loader2 size={24} className="animate-spin mb-1 text-purple-400" />
+                    ) : (
+                      <Sparkles size={24} className="mb-1 opacity-70" />
+                    )}
+                    <span className="text-[8px] font-bold uppercase">{searchingImage ? 'Buscando...' : 'Buscar via IA'}</span>
+                  </button>
+                )}
               </div>
-              <div className="aspect-square bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-blue-500 hover:text-blue-500 transition-all cursor-pointer">
-                <ImageIcon size={28} className="mb-1 opacity-50" />
-                <span className="text-[9px] font-bold uppercase">Foto 2</span>
+
+              {/* Foto 2 — Upload manual */}
+              <div className="relative">
+                <input ref={photo2Ref} type="file" accept="image/*" onChange={handlePhoto2Upload} className="hidden" />
+                {formData.photo_2_url ? (
+                  <div className="aspect-square bg-slate-950 border border-slate-700 rounded-xl overflow-hidden relative">
+                    <img src={formData.photo_2_url} alt="Foto 2" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    <button onClick={() => photo2Ref.current?.click()} disabled={uploadingImage}
+                      className="absolute bottom-1 right-1 p-1.5 bg-slate-900/90 hover:bg-blue-600 text-white rounded-lg transition-all">
+                      {uploadingImage ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    </button>
+                    <button onClick={() => setFormData(prev => ({ ...prev, photo_2_url: '' }))}
+                      className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-500 text-white rounded-lg">
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => photo2Ref.current?.click()} disabled={uploadingImage}
+                    className="aspect-square w-full bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-emerald-500 hover:text-emerald-400 transition-all cursor-pointer">
+                    {uploadingImage ? (
+                      <Loader2 size={24} className="animate-spin mb-1 text-emerald-400" />
+                    ) : (
+                      <Upload size={24} className="mb-1 opacity-70" />
+                    )}
+                    <span className="text-[8px] font-bold uppercase">{uploadingImage ? 'Enviando...' : 'Upload Foto'}</span>
+                  </button>
+                )}
               </div>
             </div>
 
