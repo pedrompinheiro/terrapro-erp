@@ -112,9 +112,30 @@ const Registrations: React.FC = () => {
     // --- Fetchers ---
     const fetchEntities = async () => {
         setLoading(true);
-        const { data, error } = await supabase.from('entities').select('*').order('name');
-        if (error) console.error(error);
-        else setEntities(data || []);
+        // Supabase default limit = 1000. Com 8000+ registros, precisamos paginar.
+        const allEntities: Entity[] = [];
+        const PAGE_SIZE = 1000;
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from('entities')
+                .select('*')
+                .order('name')
+                .range(from, from + PAGE_SIZE - 1);
+
+            if (error) { console.error(error); break; }
+            if (data && data.length > 0) {
+                allEntities.push(...data);
+                from += PAGE_SIZE;
+                hasMore = data.length === PAGE_SIZE;
+            } else {
+                hasMore = false;
+            }
+        }
+
+        setEntities(allEntities);
         setLoading(false);
     };
 
