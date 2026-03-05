@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, Building2, Briefcase, Search, Plus, Save, Edit, Trash2, X, Check, MapPin, DollarSign, WalletCards, Shield } from 'lucide-react';
 import Modal from '../components/Modal';
 import { supabase } from '../lib/supabase';
+import { smartSearch } from '../lib/smartSearch';
 import EmployeeForm from '../components/hr/EmployeeForm';
 import WorkShiftForm from '../components/hr/WorkShiftForm';
 
@@ -383,109 +384,22 @@ const Registrations: React.FC = () => {
         if (error) alert(error.message); else fetchEmployees();
     };
 
-    // --- Smart Search Engine ---
-    // Remove acentos: José → Jose, São Paulo → Sao Paulo
-    const normalize = (str: string) =>
-        str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-
-    // Similaridade entre duas strings (0 a 1) — Levenshtein simplificado
-    const similarity = (a: string, b: string): number => {
-        if (a === b) return 1;
-        if (!a || !b) return 0;
-        // Se uma contém a outra, alta similaridade
-        if (a.includes(b) || b.includes(a)) return 0.9;
-        // Levenshtein distance
-        const matrix: number[][] = [];
-        for (let i = 0; i <= a.length; i++) matrix[i] = [i];
-        for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
-        for (let i = 1; i <= a.length; i++) {
-            for (let j = 1; j <= b.length; j++) {
-                const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-                matrix[i][j] = Math.min(
-                    matrix[i - 1][j] + 1,
-                    matrix[i][j - 1] + 1,
-                    matrix[i - 1][j - 1] + cost
-                );
-            }
-        }
-        const maxLen = Math.max(a.length, b.length);
-        return maxLen === 0 ? 1 : 1 - matrix[a.length][b.length] / maxLen;
-    };
-
-    // Calcula score de match de um termo contra um campo
-    const fieldScore = (field: string, tokens: string[]): number => {
-        if (!field) return 0;
-        const norm = normalize(field);
-        let score = 0;
-        for (const token of tokens) {
-            if (norm.includes(token)) {
-                // Match exato parcial — peso alto
-                score += token.length / Math.max(norm.length, 1) * 10;
-            } else {
-                // Fuzzy: checa cada palavra do campo
-                const words = norm.split(/\s+/);
-                let bestSim = 0;
-                for (const word of words) {
-                    const sim = similarity(word, token);
-                    if (sim > bestSim) bestSim = sim;
-                }
-                // Só conta se similaridade > 0.6 (tolera ~2 letras erradas em 5)
-                if (bestSim >= 0.6) score += bestSim * 5;
-            }
-        }
-        return score;
-    };
-
     // --- Render Helpers ---
     const getFilteredEntities = (role: 'CLIENT' | 'SUPPLIER') => {
         const roleFiltered = entities.filter(e =>
             role === 'CLIENT' ? e.is_client : e.is_supplier
         );
-
         if (!searchTerm.trim()) return roleFiltered;
-
-        const rawTerm = normalize(searchTerm);
-        const onlyDigits = searchTerm.replace(/\D/g, '');
-        // Tokeniza: "diesel com" → ["diesel", "com"]
-        const tokens = rawTerm.split(/\s+/).filter(t => t.length > 0);
-
-        const scored = roleFiltered.map(e => {
-            let score = 0;
-
-            // 1) Match por documento (CNPJ/CPF) — peso máximo
-            if (onlyDigits.length >= 3) {
-                const docDigits = (e.document || '').replace(/\D/g, '');
-                if (docDigits.includes(onlyDigits)) score += 100;
-                else if (onlyDigits.includes(docDigits) && docDigits.length > 3) score += 80;
-            }
-
-            // 2) Nome fantasia — peso alto
-            score += fieldScore(e.name || '', tokens) * 3;
-
-            // 3) Razão social — peso alto
-            score += fieldScore(e.social_reason || '', tokens) * 2.5;
-
-            // 4) Email
-            score += fieldScore(e.email || '', tokens) * 1.5;
-
-            // 5) Telefone
-            if (onlyDigits.length >= 4 && (e.phone || '').replace(/\D/g, '').includes(onlyDigits)) score += 30;
-
-            // 6) Cidade / Estado
-            score += fieldScore(e.city || '', tokens) * 1;
-            score += fieldScore(e.state || '', tokens) * 0.5;
-
-            // 7) Categoria fornecedor
-            score += fieldScore(e.supplier_category || '', tokens) * 1;
-
-            return { entity: e, score };
-        });
-
-        // Retorna apenas com score > 0, ordenado por relevância
-        return scored
-            .filter(s => s.score > 0)
-            .sort((a, b) => b.score - a.score)
-            .map(s => s.entity);
+        return smartSearch(roleFiltered, searchTerm, [
+            { key: 'name', weight: 3 },
+            { key: 'social_reason', weight: 2.5 },
+            { key: 'document', isDocument: true, weight: 2 },
+            { key: 'email', weight: 1.5 },
+            { key: 'phone', isPhone: true },
+            { key: 'city', weight: 1 },
+            { key: 'state', weight: 0.5 },
+            { key: 'supplier_category', weight: 1 },
+        ]);
     };
 
     // ... getFilteredEmployees (unchanged) ...

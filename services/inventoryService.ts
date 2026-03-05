@@ -63,8 +63,23 @@ export const inventoryService = {
       .range(from, to);
 
     if (params?.search) {
-      const term = `%${params.search}%`;
-      query = query.or(`description.ilike.${term},sku.ilike.${term},barcode.ilike.${term},code.eq.${parseInt(params.search) || 0}`);
+      const raw = params.search.trim();
+      const term = `%${raw}%`;
+      const digits = raw.replace(/\D/g, '');
+      let orParts = [
+        `description.ilike.${term}`,
+        `sku.ilike.${term}`,
+        `brand_name.ilike.${term}`,
+        `category_name.ilike.${term}`,
+        `location.ilike.${term}`,
+        `notes.ilike.${term}`,
+      ];
+      if (digits) {
+        orParts.push(`barcode.ilike.%${digits}%`);
+        const num = parseInt(digits);
+        if (!isNaN(num) && num > 0) orParts.push(`code.eq.${num}`);
+      }
+      query = query.or(orParts.join(','));
     }
 
     if (params?.category) {
@@ -404,8 +419,18 @@ export const inventoryService = {
       .range(from, to);
 
     if (params?.search) {
-      const term = `%${params.search}%`;
-      query = query.or(`client_name.ilike.${term},plate.ilike.${term},equipment_name.ilike.${term},order_number.eq.${parseInt(params.search) || 0}`);
+      const raw = params.search.trim();
+      const term = `%${raw}%`;
+      const num = parseInt(raw.replace(/\D/g, ''));
+      let orParts = [
+        `client_name.ilike.${term}`,
+        `plate.ilike.${term}`,
+        `equipment_name.ilike.${term}`,
+        `description.ilike.${term}`,
+        `technician_name.ilike.${term}`,
+      ];
+      if (!isNaN(num) && num > 0) orParts.push(`order_number.eq.${num}`);
+      query = query.or(orParts.join(','));
     }
 
     if (params?.situation) {
@@ -699,13 +724,18 @@ export const inventoryService = {
     id: string; name: string; document?: string; phone?: string;
     phone2?: string; email?: string; city?: string; state?: string;
   }[]> => {
-    const term = `%${search}%`;
+    const raw = search.trim();
+    const term = `%${raw}%`;
+    const digits = raw.replace(/\D/g, '');
+    let orParts = [`name.ilike.${term}`, `social_reason.ilike.${term}`, `email.ilike.${term}`, `city.ilike.${term}`];
+    if (digits.length >= 3) orParts.push(`document.ilike.%${digits}%`);
+    if (raw.length >= 3) orParts.push(`phone.ilike.${term}`);
     const { data, error } = await supabase
       .from('entities')
       .select('id, name, document, phone, phone2, email, city, state')
       .eq('is_client', true)
       .eq('active', true)
-      .or(`name.ilike.${term},document.ilike.${term}`)
+      .or(orParts.join(','))
       .order('name')
       .limit(15);
     if (error) { console.error('Erro ao buscar clientes:', error); return []; }
@@ -735,8 +765,12 @@ export const inventoryService = {
       .range(from, to);
 
     if (params?.search) {
-      const term = `%${params.search}%`;
-      query = query.or(`supplier_name.ilike.${term},order_number.eq.${parseInt(params.search) || 0}`);
+      const raw = params.search.trim();
+      const term = `%${raw}%`;
+      const num = parseInt(raw.replace(/\D/g, ''));
+      let orParts = [`supplier_name.ilike.${term}`, `notes.ilike.${term}`, `payment_form.ilike.${term}`];
+      if (!isNaN(num) && num > 0) orParts.push(`order_number.eq.${num}`);
+      query = query.or(orParts.join(','));
     }
 
     if (params?.situation) {
@@ -856,12 +890,14 @@ export const inventoryService = {
     let result = data || [];
 
     if (params?.search) {
-      const term = params.search.toLowerCase();
-      result = result.filter(t =>
-        t.name.toLowerCase().includes(term) ||
-        (t.email && t.email.toLowerCase().includes(term)) ||
-        (t.cpf && t.cpf.includes(term))
-      );
+      const { smartSearch } = await import('../lib/smartSearch');
+      result = smartSearch(result, params.search, [
+        { key: 'name', weight: 3 },
+        { key: 'email', weight: 1.5 },
+        { key: 'cpf', isDocument: true, weight: 2 },
+        { key: 'phone', isPhone: true },
+        { key: 'specialty', weight: 1 },
+      ]);
     }
 
     return result;
@@ -1028,8 +1064,8 @@ export const inventoryService = {
   getEquipments: async (search?: string): Promise<Asset[]> => {
     let query = supabase.from('assets').select('id, code, name, model, brand, status, current_cost_center_id, default_cost_center_id').order('name');
     if (search) {
-      const term = `%${search}%`;
-      query = query.or(`name.ilike.${term},code.ilike.${term},model.ilike.${term}`);
+      const term = `%${search.trim()}%`;
+      query = query.or(`name.ilike.${term},code.ilike.${term},model.ilike.${term},brand.ilike.${term}`);
     }
     const { data, error } = await query.limit(50);
     if (error) { console.error('Erro ao buscar equipamentos:', error); return []; }
@@ -1050,8 +1086,10 @@ export const inventoryService = {
       .order('receipt_date', { ascending: false }).range(from, to);
 
     if (params?.search) {
-      const term = `%${params.search}%`;
-      query = query.or(`supplier_name.ilike.${term},receipt_number.ilike.${term}`);
+      const raw = params.search.trim();
+      const term = `%${raw}%`;
+      let orParts = [`supplier_name.ilike.${term}`, `receipt_number.ilike.${term}`, `notes.ilike.${term}`];
+      query = query.or(orParts.join(','));
     }
     if (params?.status) query = query.eq('status', params.status);
     if (params?.dateFrom) query = query.gte('receipt_date', params.dateFrom);
@@ -1221,8 +1259,13 @@ export const inventoryService = {
       .order('created_at', { ascending: false }).range(from, to);
 
     if (params?.search) {
-      const term = `%${params.search}%`;
-      query = query.or(`supplier_name.ilike.${term},invoice_number.ilike.${term},chave_nfe.ilike.${term}`);
+      const raw = params.search.trim();
+      const term = `%${raw}%`;
+      const digits = raw.replace(/\D/g, '');
+      let orParts = [`supplier_name.ilike.${term}`, `invoice_number.ilike.${term}`];
+      if (digits.length >= 5) orParts.push(`chave_nfe.ilike.%${digits}%`);
+      else orParts.push(`chave_nfe.ilike.${term}`);
+      query = query.or(orParts.join(','));
     }
     if (params?.status) query = query.eq('status', params.status);
     if (params?.dateFrom) query = query.gte('issue_date', params.dateFrom);

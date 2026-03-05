@@ -8,6 +8,7 @@ import Tesseract from 'tesseract.js';
 import EmployeeForm from '../components/hr/EmployeeForm';
 import TimeInput from '../components/TimeInput';
 import { supabase } from '../lib/supabase';
+import { smartSearch } from '../lib/smartSearch';
 
 interface OCRResult {
     file: File;
@@ -254,11 +255,16 @@ const HRManagement: React.FC = () => {
 
         // 1. Filtro de Texto
         if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            filtered = filtered.filter(e =>
-                e.name.toLowerCase().includes(lower) ||
-                (e.registration_number && e.registration_number.includes(lower))
-            );
+            filtered = smartSearch(filtered, searchTerm, [
+                { key: 'full_name', weight: 3 },
+                { key: 'name', weight: 3 },
+                { key: 'registration_number', weight: 2 },
+                { key: 'role', weight: 1.5 },
+                { key: 'cpf', isDocument: true, weight: 2 },
+                { key: 'email', weight: 1 },
+                { key: 'phone', isPhone: true },
+                { key: 'department', weight: 1 },
+            ]);
         }
 
         // 2. Filtro de Status (Ativo/Inativo)
