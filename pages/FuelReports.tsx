@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
 import { fleetManagementService } from '../services/fleetService';
 import {
   BarChart3, Filter, Download, Fuel, TrendingDown, TrendingUp, Clock,
@@ -93,7 +94,7 @@ const FuelReports: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
 
   React.useEffect(() => {
-    supabase.from('entities').select('id, name').then(({ data }) => setSuppliers(data || []));
+    fetchAll('entities', { select: 'id, name', order: { column: 'name' } }).then(data => setSuppliers(data));
     fleetManagementService.getEmployees().then(data => setEmployees(data)).catch(() => {});
   }, []);
 

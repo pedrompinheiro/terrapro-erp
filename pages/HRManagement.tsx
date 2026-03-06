@@ -1,12 +1,14 @@
 
 import React, { useState } from 'react';
-import { Calendar, Clock, DollarSign, FileText, User, Save, Search, Download, Edit2, AlertCircle, Plus, Minus, Folder, Loader2, Camera, Upload, Trash2, CheckCircle, AlertTriangle, X } from 'lucide-react';
+import { Calendar, Clock, DollarSign, FileText, User, Save, Search, Download, Edit2, AlertCircle, Plus, Minus, Folder, Loader2, Camera, Upload, Trash2, CheckCircle, AlertTriangle, X, Calculator } from 'lucide-react';
 import Modal from '../components/Modal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Tesseract from 'tesseract.js';
 import EmployeeForm from '../components/hr/EmployeeForm';
+import TimeInput from '../components/TimeInput';
 import { supabase } from '../lib/supabase';
+import { smartSearch } from '../lib/smartSearch';
 
 interface OCRResult {
     file: File;
@@ -34,7 +36,7 @@ interface OCRResult {
     }>;
 }
 import { dashboardService } from '../services/api';
-import { TimeRecord, PayrollEntry } from '../services/mockData';
+import { TimeRecord, PayrollEntry } from '../services/mockData'; // tipos apenas — sem dados mock
 import { ERPDocument } from '../types';
 
 interface Employee {
@@ -253,11 +255,16 @@ const HRManagement: React.FC = () => {
 
         // 1. Filtro de Texto
         if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            filtered = filtered.filter(e =>
-                e.name.toLowerCase().includes(lower) ||
-                (e.registration_number && e.registration_number.includes(lower))
-            );
+            filtered = smartSearch(filtered, searchTerm, [
+                { key: 'full_name', weight: 3 },
+                { key: 'name', weight: 3 },
+                { key: 'registration_number', weight: 2 },
+                { key: 'role', weight: 1.5 },
+                { key: 'cpf', isDocument: true, weight: 2 },
+                { key: 'email', weight: 1 },
+                { key: 'phone', isPhone: true },
+                { key: 'department', weight: 1 },
+            ]);
         }
 
         // 2. Filtro de Status (Ativo/Inativo)
@@ -560,7 +567,8 @@ const HRManagement: React.FC = () => {
 
     const processImages = async () => {
         setIsProcessingOCR(true);
-        const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        const { getGeminiKey } = await import('../lib/getGeminiKey');
+        const geminiKey = await getGeminiKey();
         const newResults = [...ocrResults];
 
         for (let i = 0; i < newResults.length; i++) {
@@ -574,7 +582,7 @@ const HRManagement: React.FC = () => {
                     // --- MODO TURBO (GEMINI AI) ---
                     const base64 = await fileToBase64(newResults[i].file);
 
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`, {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -691,15 +699,16 @@ const HRManagement: React.FC = () => {
             if (res.parsedRecords && res.parsedRecords.length > 0) {
                 const recordsToSave = res.parsedRecords.filter(r => r.selected !== false); // Default true
 
+                const matchedEmp = employees.find(e => e.id === res.matchedEmployeeId);
                 for (const record of recordsToSave) {
                     const { error } = await supabase.from('time_entries').upsert({
                         employee_id: res.matchedEmployeeId,
+                        company_id: matchedEmp?.company_id || null,
                         date: record.data,
-                        entry1: record.entrada1 || null,
-                        exit1: record.saida1 || null,
-                        entry2: record.entrada2 || null,
-                        exit2: record.saida2 || null,
-                        total_hours: '00:00',
+                        entry_time: record.entrada1 || null,
+                        break_start: record.saida1 || null,
+                        break_end: record.entrada2 || null,
+                        exit_time: record.saida2 || null,
                         status: 'REGULAR'
                     }, { onConflict: 'employee_id,date' as any });
 
@@ -713,14 +722,15 @@ const HRManagement: React.FC = () => {
                 // MODO ANTIGO (Fallback / Manual Único)
                 if (!res.manualDate) continue;
 
+                const manualEmp = employees.find(e => e.id === res.matchedEmployeeId);
                 const { error } = await supabase.from('time_entries').upsert({
                     employee_id: res.matchedEmployeeId,
+                    company_id: manualEmp?.company_id || null,
                     date: res.manualDate,
-                    entry1: res.manualEntry1 || null,
-                    exit1: res.manualExit1 || null,
-                    entry2: res.manualEntry2 || null,
-                    exit2: res.manualExit2 || null,
-                    total_hours: '00:00',
+                    entry_time: res.manualEntry1 || null,
+                    break_start: res.manualExit1 || null,
+                    break_end: res.manualEntry2 || null,
+                    exit_time: res.manualExit2 || null,
                     status: 'REGULAR'
                 }, { onConflict: 'employee_id,date' as any });
 
@@ -754,49 +764,14 @@ const HRManagement: React.FC = () => {
         setOcrResults(newResults);
     };
 
-    const updateRecordLocal = (index: number, field: keyof TimeRecord, value: string) => {
-        let processedValue = value;
-
-        // Máscara de Hora (HH:MM) Inteligente
-        if (['entry1', 'exit1', 'entry2', 'exit2'].includes(field)) {
-            // Remove tudo exceto números
-            const raw = value.replace(/\D/g, '').slice(0, 4);
-
-            if (raw.length > 2) {
-                // Se tem 3+ digitos, insere os dois pontos
-                processedValue = `${raw.slice(0, 2)}:${raw.slice(2)}`;
-            } else {
-                processedValue = raw;
-            }
-        }
-
+    const updateRecordField = (index: number, field: keyof TimeRecord, value: string) => {
         const newRecords = [...timeRecords];
-        newRecords[index] = { ...newRecords[index], [field]: processedValue };
-
-        // Se mudou um campo de hora, recalcula totalHours imediatamente para feedback visual?
-        // Não, totalHours depende de parseComplexo. Melhor deixar pro onBlur ou useEffect se quiser real-time.
-        // A função original recalculava? Vamos ver o original... não recalculava.
-
+        newRecords[index] = { ...newRecords[index], [field]: value };
         setTimeRecords(newRecords);
     };
 
-    const handleInlineBlur = async (index: number, field: keyof TimeRecord) => {
+    const handleInlineSave = async (index: number) => {
         const record = { ...timeRecords[index] };
-        let value = record[field] as string;
-
-        // Auto-format: 0800 -> 08:00
-        const clean = value.replace(/\D/g, '');
-        if (clean.length === 4) {
-            value = `${clean.slice(0, 2)}:${clean.slice(2, 4)}`;
-        } else if (clean.length === 3) {
-            value = `0${clean.slice(0, 1)}:${clean.slice(1, 3)}`; // 830 -> 08:30
-        }
-
-        // Se vazio, mantém vazio
-        if (clean.length === 0) value = '';
-
-        // Atualiza valor formatado no estado local
-        record[field as any] = value;
 
         // Recalcular Total de Horas
         const t1 = calculateTimeDiff(record.entry1, record.exit1);
@@ -820,27 +795,59 @@ const HRManagement: React.FC = () => {
             delete payload.id;
         }
 
+        // Buscar company_id do funcionário selecionado
+        const emp = employees.find(e => e.id === selectedEmployee);
+
         const { data, error } = await supabase
             .from('time_entries')
             .upsert({
                 employee_id: selectedEmployee,
+                company_id: emp?.company_id || null,
                 date: payload.date,
-                entry1: payload.entry1 || null,
-                exit1: payload.exit1 || null,
-                entry2: payload.entry2 || null,
-                exit2: payload.exit2 || null,
-                total_hours: payload.totalHours,
-                status: 'MANUAL_EDIT' // Marca como editado manualmente
+                entry_time: payload.entry1 || null,
+                break_start: payload.exit1 || null,
+                break_end: payload.entry2 || null,
+                exit_time: payload.exit2 || null,
+                status: 'MANUAL_EDIT'
             }, { onConflict: 'employee_id,date' as any })
             .select()
             .single();
 
         if (error) {
             console.error('Erro ao salvar inline:', error);
-            // Opcional: Toast de erro
-        } else {
-            // Opcional: Toast de sucesso discreto ou indicador visual
         }
+        return { data, error };
+    };
+
+    const handleSaveAll = async () => {
+        if (!selectedEmployee || timeRecords.length === 0) return;
+
+        const recordsToSave = timeRecords.filter(r =>
+            r.entry1 || r.exit1 || r.entry2 || r.exit2
+        );
+
+        if (recordsToSave.length === 0) {
+            alert('Nenhum registro com dados para salvar.');
+            return;
+        }
+
+        let saved = 0;
+        let errors = 0;
+
+        for (const record of recordsToSave) {
+            const { error } = await saveRecordToSupabase(record);
+            if (error) errors++;
+            else saved++;
+        }
+
+        if (errors > 0) {
+            alert(`${saved} registros salvos, ${errors} com erro.`);
+        } else {
+            alert(`${saved} registros salvos com sucesso!`);
+        }
+
+        // Recarrega do banco
+        fetchTimeRecords();
     };
 
     const fetchTimeRecords = async () => {
@@ -989,16 +996,19 @@ const HRManagement: React.FC = () => {
             // Direct Supabase upsert to handle both insert (new) and update (existing)
 
 
+            // Buscar company_id do funcionário selecionado
+            const emp = employees.find(e => e.id === selectedEmployee);
+
             const { data, error } = await supabase
                 .from('time_entries')
                 .upsert({
                     employee_id: selectedEmployee,
+                    company_id: emp?.company_id || null,
                     date: updated.date,
-                    entry1: updated.entry1 || null,
-                    exit1: updated.exit1 || null,
-                    entry2: updated.entry2 || null,
-                    exit2: updated.exit2 || null,
-                    total_hours: updated.totalHours,
+                    entry_time: updated.entry1 || null,
+                    break_start: updated.exit1 || null,
+                    break_end: updated.entry2 || null,
+                    exit_time: updated.exit2 || null,
                     status: 'MANUAL_EDIT'
                 }, { onConflict: 'employee_id,date' as any })
                 .select()
@@ -1007,16 +1017,17 @@ const HRManagement: React.FC = () => {
             if (error) throw error;
 
             // Update local state with the returned record (which now has a real ID)
+            // DB usa entry_time/break_start/break_end/exit_time
             const newRecord: TimeRecord = {
                 id: data.id,
                 date: data.date,
-                entry1: (data.entry1 || '').slice(0, 5),
-                exit1: (data.exit1 || '').slice(0, 5),
-                entry2: (data.entry2 || '').slice(0, 5),
-                exit2: (data.exit2 || '').slice(0, 5),
+                entry1: (data.entry_time || '').slice(0, 5),
+                exit1: (data.break_start || '').slice(0, 5),
+                entry2: (data.break_end || '').slice(0, 5),
+                exit2: (data.exit_time || '').slice(0, 5),
                 totalHours: formatMinutesToHHMM(
-                    calculateTimeDiff(data.entry1 || '', data.exit1 || '') +
-                    calculateTimeDiff(data.entry2 || '', data.exit2 || '')
+                    calculateTimeDiff(data.entry_time || '', data.break_start || '') +
+                    calculateTimeDiff(data.break_end || '', data.exit_time || '')
                 ),
                 status: data.status
             };
@@ -1069,6 +1080,52 @@ const HRManagement: React.FC = () => {
             case 'OVERTIME': return 'text-amber-500 bg-amber-500/10';
             case 'MISSING': return 'text-slate-500 opacity-50 border border-slate-700 border-dashed';
             default: return 'text-slate-500 bg-slate-500/10';
+        }
+    };
+
+    // ─── RECALCULAR PONTOS DO PERÍODO SELECIONADO ───────────
+    const [isRecalculating, setIsRecalculating] = useState(false);
+
+    const handleRecalcAll = async () => {
+        // Recalcula APENAS os registros visíveis na tela (período startDate→endDate)
+        if (timeRecords.length === 0) return;
+        if (!confirm(`Recalcular ${timeRecords.length} registros do período ${startDate} a ${endDate}?`)) return;
+        setIsRecalculating(true);
+
+        try {
+            const updated = timeRecords.map(record => {
+                const t1 = calculateTimeDiff(record.entry1, record.exit1);
+                const t2 = calculateTimeDiff(record.entry2, record.exit2);
+                const totalMinutes = t1 + t2;
+                return { ...record, totalHours: formatMinutesToHHMM(totalMinutes) };
+            });
+
+            // Salvar em batch (apenas o período carregado na tela)
+            let savedCount = 0;
+            for (const rec of updated) {
+                if (!selectedEmployee) continue;
+                const { error } = await supabase
+                    .from('time_entries')
+                    .upsert({
+                        employee_id: selectedEmployee,
+                        date: rec.date,
+                        entry1: rec.entry1 || null,
+                        exit1: rec.exit1 || null,
+                        entry2: rec.entry2 || null,
+                        exit2: rec.exit2 || null,
+                        total_hours: rec.totalHours,
+                        status: 'RECALCULADO'
+                    }, { onConflict: 'employee_id,date' as any });
+                if (!error) savedCount++;
+            }
+
+            setTimeRecords(updated);
+            alert(`${savedCount} registros recalculados e salvos!`);
+        } catch (err) {
+            console.error('Erro ao recalcular:', err);
+            alert('Erro ao recalcular pontos.');
+        } finally {
+            setIsRecalculating(false);
         }
     };
 
@@ -1371,10 +1428,18 @@ const HRManagement: React.FC = () => {
 
                                         <div className="h-4 w-px bg-slate-800"></div>
 
+                                        <button onClick={handleRecalcAll} disabled={isRecalculating || timeRecords.length === 0}
+                                            title={`Recalcula as horas de ${timeRecords.length} registros do período selecionado`}
+                                            className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-amber-900/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                                            {isRecalculating ? <Loader2 size={14} className="animate-spin" /> : <Calculator size={14} />} Recalcular Período
+                                        </button>
+
+                                        <div className="h-4 w-px bg-slate-800"></div>
+
                                         <button onClick={handleExportPDF} className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-slate-800">
                                             <Download size={14} /> PDF
                                         </button>
-                                        <button className="text-xs font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors ml-auto px-2 py-1 rounded hover:bg-blue-900/20">
+                                        <button onClick={handleSaveAll} className="text-xs font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors ml-auto px-2 py-1 rounded hover:bg-blue-900/20">
                                             <Save size={14} /> Salvar Tudo
                                         </button>
                                     </div>
@@ -1427,43 +1492,39 @@ const HRManagement: React.FC = () => {
                                                             </td>
 
                                                             <td className="px-1 py-0.5 text-center border-l border-slate-800/50">
-                                                                <input
+                                                                <TimeInput
                                                                     value={record.entry1}
-                                                                    onChange={(e) => updateRecordLocal(idx, 'entry1', e.target.value)}
-                                                                    onBlur={() => handleInlineBlur(idx, 'entry1')}
-                                                                    className="w-full bg-transparent text-center text-white focus:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded h-full"
-                                                                    placeholder="--"
-                                                                    maxLength={5}
+                                                                    onChange={(v) => updateRecordField(idx, 'entry1', v)}
+                                                                    onBlurSave={() => handleInlineSave(idx)}
+                                                                    placeholder="--:--"
+                                                                    dark
                                                                 />
                                                             </td>
                                                             <td className="px-1 py-0.5 text-center">
-                                                                <input
+                                                                <TimeInput
                                                                     value={record.exit1}
-                                                                    onChange={(e) => updateRecordLocal(idx, 'exit1', e.target.value)}
-                                                                    onBlur={() => handleInlineBlur(idx, 'exit1')}
-                                                                    className="w-full bg-transparent text-center text-white focus:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded h-full"
-                                                                    placeholder="--"
-                                                                    maxLength={5}
+                                                                    onChange={(v) => updateRecordField(idx, 'exit1', v)}
+                                                                    onBlurSave={() => handleInlineSave(idx)}
+                                                                    placeholder="--:--"
+                                                                    dark
                                                                 />
                                                             </td>
                                                             <td className="px-1 py-0.5 text-center border-l border-slate-800/50">
-                                                                <input
+                                                                <TimeInput
                                                                     value={record.entry2}
-                                                                    onChange={(e) => updateRecordLocal(idx, 'entry2', e.target.value)}
-                                                                    onBlur={() => handleInlineBlur(idx, 'entry2')}
-                                                                    className="w-full bg-transparent text-center text-white focus:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded h-full"
-                                                                    placeholder="--"
-                                                                    maxLength={5}
+                                                                    onChange={(v) => updateRecordField(idx, 'entry2', v)}
+                                                                    onBlurSave={() => handleInlineSave(idx)}
+                                                                    placeholder="--:--"
+                                                                    dark
                                                                 />
                                                             </td>
                                                             <td className="px-1 py-0.5 text-center">
-                                                                <input
+                                                                <TimeInput
                                                                     value={record.exit2}
-                                                                    onChange={(e) => updateRecordLocal(idx, 'exit2', e.target.value)}
-                                                                    onBlur={() => handleInlineBlur(idx, 'exit2')}
-                                                                    className="w-full bg-transparent text-center text-white focus:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded h-full"
-                                                                    placeholder="--"
-                                                                    maxLength={5}
+                                                                    onChange={(v) => updateRecordField(idx, 'exit2', v)}
+                                                                    onBlurSave={() => handleInlineSave(idx)}
+                                                                    placeholder="--:--"
+                                                                    dark
                                                                 />
                                                             </td>
 

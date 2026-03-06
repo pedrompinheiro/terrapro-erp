@@ -1,12 +1,25 @@
 
 import React, { useState, useEffect } from 'react';
-import { Users, Building2, Briefcase, Search, Plus, Save, Edit, Trash2, X, Check, MapPin, DollarSign, WalletCards } from 'lucide-react';
+import { Users, Building2, Briefcase, Search, Plus, Save, Edit, Trash2, X, Check, MapPin, DollarSign, WalletCards, Shield } from 'lucide-react';
 import Modal from '../components/Modal';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/supabaseUtils';
+import { smartSearch } from '../lib/smartSearch';
 import EmployeeForm from '../components/hr/EmployeeForm';
 import WorkShiftForm from '../components/hr/WorkShiftForm';
 
-type Tab = 'CLIENTS' | 'SUPPLIERS' | 'EMPLOYEES' | 'WORK_SHIFTS';
+type Tab = 'CLIENTS' | 'SUPPLIERS' | 'EMPLOYEES' | 'WORK_SHIFTS' | 'JUSTIFICATIONS';
+
+interface AbsenceJustification {
+    id: string;
+    name: string;
+    code: string;
+    description: string;
+    excuses_absence: boolean;
+    affects_dsr: boolean;
+    active: boolean;
+    created_at: string;
+}
 
 interface Entity {
     id: string;
@@ -34,6 +47,7 @@ interface Entity {
     // Comum
     email?: string;
     phone?: string;
+    phone2?: string;
     website?: string;
 
     zip_code?: string;
@@ -50,6 +64,8 @@ interface Entity {
     contacts?: { name: string; role: string; email?: string; phone?: string }[];
 
     active?: boolean;
+    legacy_code?: string;
+    created_at?: string;
 }
 
 const Registrations: React.FC = () => {
@@ -80,6 +96,12 @@ const Registrations: React.FC = () => {
     const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
     const [shiftInitialData, setShiftInitialData] = useState<any>(null);
 
+    // Justifications States
+    const [justifications, setJustifications] = useState<AbsenceJustification[]>([]);
+    const [isJustModalOpen, setIsJustModalOpen] = useState(false);
+    const [editingJustId, setEditingJustId] = useState<string | null>(null);
+    const [justForm, setJustForm] = useState<Partial<AbsenceJustification>>({});
+
     // Temporary state for new contact
     const [newContact, setNewContact] = useState({ name: '', role: '', email: '', phone: '' });
 
@@ -88,22 +110,21 @@ const Registrations: React.FC = () => {
         if (activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') fetchEntities();
         else if (activeTab === 'EMPLOYEES') { fetchEmployees(); fetchCompanies(); }
         else if (activeTab === 'WORK_SHIFTS') fetchShifts();
+        else if (activeTab === 'JUSTIFICATIONS') fetchJustifications();
     }, [activeTab]);
 
     // --- Fetchers ---
     const fetchEntities = async () => {
         setLoading(true);
-        const { data, error } = await supabase.from('entities').select('*').order('name');
-        if (error) console.error(error);
-        else setEntities(data || []);
+        const allEntities = await fetchAll<Entity>('entities', { order: { column: 'name' } });
+        setEntities(allEntities);
         setLoading(false);
     };
 
     const fetchEmployees = async () => {
         setLoading(true);
-        const { data, error } = await supabase.from('employees').select('*, companies(name)').order('full_name');
-        if (error) console.error(error);
-        else setRealEmployees(data || []);
+        const data = await fetchAll('employees', { select: '*, companies(name)', order: { column: 'full_name' } });
+        setRealEmployees(data);
         setLoading(false);
     };
 
@@ -120,6 +141,64 @@ const Registrations: React.FC = () => {
         if (data) setAvailableCompanies(data);
     };
 
+    const fetchJustifications = async () => {
+        setLoading(true);
+        const { data, error } = await supabase.from('absence_justifications').select('*').order('name');
+        if (error) console.error(error);
+        else setJustifications(data || []);
+        setLoading(false);
+    };
+
+    // --- Justification Handlers ---
+    const handleSaveJustification = async () => {
+        if (!justForm.name) return alert('Nome é obrigatório');
+        if (!justForm.code) return alert('Código é obrigatório');
+
+        const payload = {
+            name: justForm.name,
+            code: justForm.code.toUpperCase().replace(/\s/g, '_'),
+            description: justForm.description || '',
+            excuses_absence: justForm.excuses_absence !== false,
+            affects_dsr: justForm.affects_dsr || false,
+            active: justForm.active !== false,
+        };
+
+        try {
+            if (editingJustId) {
+                const { error } = await supabase.from('absence_justifications').update(payload).eq('id', editingJustId);
+                if (error) throw error;
+                alert('Justificativa atualizada!');
+            } else {
+                const { error } = await supabase.from('absence_justifications').insert(payload);
+                if (error) throw error;
+                alert('Justificativa criada!');
+            }
+            setIsJustModalOpen(false);
+            fetchJustifications();
+        } catch (e: any) {
+            alert('Erro ao salvar: ' + e.message);
+        }
+    };
+
+    const handleEditJustification = (j: AbsenceJustification) => {
+        setEditingJustId(j.id);
+        setJustForm(j);
+        setIsJustModalOpen(true);
+    };
+
+    const handleDeleteJustification = async (id: string) => {
+        if (!window.confirm('Excluir esta justificativa?')) return;
+        const { error } = await supabase.from('absence_justifications').delete().eq('id', id);
+        if (error) alert(error.message);
+        else fetchJustifications();
+    };
+
+    const handleOpenCreateJustification = () => {
+        setEditingJustId(null);
+        setJustForm({ excuses_absence: true, affects_dsr: false, active: true });
+        setIsJustModalOpen(true);
+    };
+
     // --- Handlers ---
     const handleSaveEntity = async () => {
         if (!entityForm.name) return alert('Nome/Razão Social é obrigatório');
@@ -129,38 +208,137 @@ const Registrations: React.FC = () => {
             return alert('Selecione pelo menos um papel: Cliente ou Fornecedor.');
         }
 
-        const payload = { ...entityForm };
-        if (!payload.document) delete payload.document;
-        if (!payload.email) delete payload.email;
+        // Build payload only with valid DB columns (avoid sending unknown fields)
+        const payload: Record<string, any> = {};
+        const validFields = [
+            'is_client', 'is_supplier', 'type', 'name', 'social_reason', 'document',
+            'state_registration', 'municipal_registration', 'birth_date',
+            'supplier_category', 'credit_limit', 'credit_rating',
+            'email', 'phone', 'website',
+            'zip_code', 'street', 'number', 'complement', 'neighborhood', 'city', 'state',
+            'payment_terms', 'notes', 'contacts', 'active',
+        ];
+
+        for (const key of validFields) {
+            const val = (entityForm as any)[key];
+            if (val !== undefined && val !== '') {
+                payload[key] = val;
+            }
+        }
+
+        // Ensure required fields
+        payload.is_client = entityForm.is_client || false;
+        payload.is_supplier = entityForm.is_supplier || false;
+        payload.name = entityForm.name;
         if (!payload.contacts) payload.contacts = [];
+        if (payload.active === undefined) payload.active = true;
+
+        // Clean numeric fields (avoid NaN)
+        if (payload.credit_limit !== undefined) {
+            payload.credit_limit = Number(payload.credit_limit) || 0;
+        }
+
+        // Ensure document is cleaned (remove mask chars for storage)
+        if (payload.document) {
+            payload.document = payload.document.replace(/[.\-\/\s]/g, '').trim();
+        }
+
+        // Check for duplicate document (CNPJ/CPF)
+        if (payload.document) {
+            const cleanDoc = payload.document.replace(/\D/g, '');
+            const { data: existing } = await supabase
+                .from('entities')
+                .select('id, name, document')
+                .or(`document.eq.${cleanDoc},document.eq.${payload.document}`)
+                .limit(5);
+
+            const duplicates = (existing || []).filter(e => {
+                // Se estiver editando, ignorar o próprio registro
+                if (editingEntityId && e.id === editingEntityId) return false;
+                const eDoc = (e.document || '').replace(/\D/g, '');
+                return eDoc === cleanDoc;
+            });
+
+            if (duplicates.length > 0) {
+                const nomes = duplicates.map(d => `• ${d.name}`).join('\n');
+                alert(`⚠️ CNPJ/CPF já cadastrado!\n\nEste documento já pertence a:\n${nomes}\n\nEdite o cadastro existente ao invés de criar novo.`);
+                return;
+            }
+        }
+
+        console.log('[SAVE ENTITY] payload:', JSON.stringify(payload, null, 2));
 
         try {
             if (editingEntityId) {
-                const { error } = await supabase.from('entities').update(payload).eq('id', editingEntityId);
+                const { data, error } = await supabase.from('entities').update(payload).eq('id', editingEntityId).select();
                 if (error) throw error;
                 alert('Cadastro atualizado com sucesso!');
             } else {
-                const { error } = await supabase.from('entities').insert(payload);
+                const { data, error } = await supabase.from('entities').insert(payload).select();
                 if (error) throw error;
                 alert('Cadastro realizado com sucesso!');
             }
             setIsModalOpen(false);
             fetchEntities();
         } catch (e: any) {
-            alert('Erro ao salvar: ' + e.message);
+            console.error('[SAVE ENTITY] ERROR:', e);
+            alert('Erro ao salvar: ' + (e.message || e.details || JSON.stringify(e)));
         }
     };
 
     const handleDeleteEntity = async (id: string) => {
-        if (!window.confirm("ATENÇÃO: Deseja excluir este cadastro?")) return;
-        const { error } = await supabase.from('entities').delete().eq('id', id);
-        if (error) alert(error.message);
-        else fetchEntities();
+        // Verificar se a entidade tem referências em outras tabelas
+        const fkChecks = [
+            { table: 'contas_receber', column: 'cliente_id', label: 'Contas a Receber' },
+            { table: 'contas_pagar', column: 'fornecedor_id', label: 'Contas a Pagar' },
+            { table: 'purchase_orders', column: 'supplier_id', label: 'Pedidos de Compra' },
+            { table: 'inventory_movements', column: 'entity_id', label: 'Movimentações de Estoque' },
+            { table: 'inventory_supplier_products', column: 'supplier_id', label: 'Produtos de Fornecedor' },
+            { table: 'fuel_records', column: 'supplier_id', label: 'Registros de Combustível' },
+        ];
+
+        const refs: string[] = [];
+        await Promise.all(fkChecks.map(async (fk) => {
+            try {
+                const { count } = await supabase
+                    .from(fk.table)
+                    .select('id', { count: 'exact', head: true })
+                    .eq(fk.column, id);
+                if (count && count > 0) {
+                    refs.push(`• ${fk.label}: ${count} registro(s)`);
+                }
+            } catch { /* tabela pode não existir */ }
+        }));
+
+        if (refs.length > 0) {
+            // Tem referências — não pode excluir, apenas inativar
+            const entity = entities.find(e => e.id === id);
+            const msg = `⚠️ Este cadastro não pode ser excluído!\n\n"${entity?.name}" possui vínculos:\n${refs.join('\n')}\n\nDeseja INATIVAR este cadastro?`;
+            if (!window.confirm(msg)) return;
+
+            const { error } = await supabase.from('entities').update({ active: false }).eq('id', id);
+            if (error) {
+                alert('Erro ao inativar: ' + error.message);
+            } else {
+                alert('✅ Cadastro inativado com sucesso!');
+                fetchEntities();
+            }
+        } else {
+            // Sem referências — pode excluir
+            if (!window.confirm("Deseja excluir este cadastro permanentemente?\n\nEsta ação não pode ser desfeita.")) return;
+            const { error } = await supabase.from('entities').delete().eq('id', id);
+            if (error) alert('Erro ao excluir: ' + error.message);
+            else fetchEntities();
+        }
     };
 
     const handleEditEntity = (e: Entity) => {
         setEditingEntityId(e.id);
-        setEntityForm(e);
+        const parsed = {
+            ...e,
+            contacts: typeof e.contacts === 'string' ? JSON.parse(e.contacts) : (e.contacts || []),
+        };
+        setEntityForm(parsed);
         setActiveModalTab('GENERAL');
         setIsModalOpen(true);
     };
@@ -249,11 +427,20 @@ const Registrations: React.FC = () => {
 
     // --- Render Helpers ---
     const getFilteredEntities = (role: 'CLIENT' | 'SUPPLIER') => {
-        return entities.filter(e => {
-            const matchesRole = role === 'CLIENT' ? e.is_client : e.is_supplier;
-            const matchesSearch = (e.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || (e.document || '').includes(searchTerm);
-            return matchesRole && matchesSearch;
-        });
+        const roleFiltered = entities.filter(e =>
+            role === 'CLIENT' ? e.is_client : e.is_supplier
+        );
+        if (!searchTerm.trim()) return roleFiltered;
+        return smartSearch(roleFiltered, searchTerm, [
+            { key: 'name', weight: 3 },
+            { key: 'social_reason', weight: 2.5 },
+            { key: 'document', isDocument: true, weight: 2 },
+            { key: 'email', weight: 1.5 },
+            { key: 'phone', isPhone: true },
+            { key: 'city', weight: 1 },
+            { key: 'state', weight: 0.5 },
+            { key: 'supplier_category', weight: 1 },
+        ]);
     };
 
     // ... getFilteredEmployees (unchanged) ...
@@ -277,11 +464,12 @@ const Registrations: React.FC = () => {
                     if (activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') handleOpenCreate();
                     else if (activeTab === 'EMPLOYEES') { setEditingEmpId(null); setIsEmployeeFormOpen(true); }
                     else if (activeTab === 'WORK_SHIFTS') { setEditingShiftId(null); setShiftInitialData(null); setIsShiftFormOpen(true); }
+                    else if (activeTab === 'JUSTIFICATIONS') handleOpenCreateJustification();
                 }}
                 className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-all flex items-center gap-2"
             >
                 <Plus size={18} />
-                {activeTab === 'CLIENTS' ? 'Novo Parceiro' : activeTab === 'SUPPLIERS' ? 'Novo Parceiro' : activeTab === 'EMPLOYEES' ? 'Novo Funcionário' : 'Novo Turno'}
+                {activeTab === 'CLIENTS' ? 'Novo Parceiro' : activeTab === 'SUPPLIERS' ? 'Novo Parceiro' : activeTab === 'EMPLOYEES' ? 'Novo Funcionário' : activeTab === 'JUSTIFICATIONS' ? 'Nova Justificativa' : 'Novo Turno'}
             </button>
         </div>
     );
@@ -292,7 +480,8 @@ const Registrations: React.FC = () => {
                 { id: 'CLIENTS', label: 'Clientes', icon: Users },
                 { id: 'SUPPLIERS', label: 'Fornecedores', icon: Building2 },
                 { id: 'EMPLOYEES', label: 'Funcionários', icon: Briefcase },
-                { id: 'WORK_SHIFTS', label: 'Turnos', icon: Briefcase }
+                { id: 'WORK_SHIFTS', label: 'Turnos', icon: Briefcase },
+                { id: 'JUSTIFICATIONS', label: 'Justificativas', icon: Shield }
             ].map(tab => (
                 <button
                     key={tab.id}
@@ -332,11 +521,12 @@ const Registrations: React.FC = () => {
                             <tr>
                                 {(activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') && (
                                     <>
-                                        <th className="px-8 py-4">Parceiro</th>
-                                        <th className="px-8 py-4">Documento</th>
-                                        <th className="px-8 py-4">Endereço</th>
-                                        <th className="px-8 py-4">Contato</th>
-                                        {activeTab === 'SUPPLIERS' && <th className="px-8 py-4">Categoria</th>}
+                                        <th className="px-4 py-4 w-20">Cód</th>
+                                        <th className="px-6 py-4">Parceiro</th>
+                                        <th className="px-6 py-4">Documento</th>
+                                        <th className="px-6 py-4">Endereço</th>
+                                        <th className="px-6 py-4">Contato</th>
+                                        {activeTab === 'SUPPLIERS' && <th className="px-6 py-4">Categoria</th>}
                                     </>
                                 )}
                                 {activeTab === 'EMPLOYEES' && (
@@ -353,6 +543,15 @@ const Registrations: React.FC = () => {
                                         <th className="px-8 py-4">Horário</th>
                                     </>
                                 )}
+                                {activeTab === 'JUSTIFICATIONS' && (
+                                    <>
+                                        <th className="px-8 py-4">Nome</th>
+                                        <th className="px-8 py-4">Código</th>
+                                        <th className="px-8 py-4">Abona Falta</th>
+                                        <th className="px-8 py-4">Afeta DSR</th>
+                                        <th className="px-8 py-4">Status</th>
+                                    </>
+                                )}
                                 <th className="px-8 py-4 text-right">Ações</th>
                             </tr>
                         </thead>
@@ -360,26 +559,31 @@ const Registrations: React.FC = () => {
                             {/* CLIENTS & SUPPLIERS ROWS */}
                             {(activeTab === 'CLIENTS' || activeTab === 'SUPPLIERS') && getFilteredEntities(activeTab === 'CLIENTS' ? 'CLIENT' : 'SUPPLIER').map(e => (
                                 <tr key={e.id} className="hover:bg-slate-800/30 transition-colors">
-                                    <td className="px-8 py-5">
+                                    <td className="px-4 py-5">
+                                        <span className="text-amber-400 font-bold font-mono text-xs">
+                                            {e.legacy_code || e.id.slice(0, 6).toUpperCase()}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-5">
                                         <div className="font-bold text-white uppercase flex items-center gap-2">
                                             {e.name}
-                                            {/* Badge se for ambos */}
                                             {e.is_client && e.is_supplier && <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">HÍBRIDO</span>}
+                                            {e.active === false && <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">INATIVO</span>}
                                         </div>
                                         <div className="text-[10px] text-slate-500 font-mono">{e.social_reason || e.name}</div>
                                     </td>
-                                    <td className="px-8 py-5 text-slate-400 font-mono text-xs">{e.document || '-'}</td>
-                                    <td className="px-8 py-5 text-slate-400 text-xs">
+                                    <td className="px-6 py-5 text-slate-400 font-mono text-xs">{e.document || '-'}</td>
+                                    <td className="px-6 py-5 text-slate-400 text-xs">
                                         {e.city ? `${e.city}/${e.state || ''}` : '-'}
                                     </td>
-                                    <td className="px-8 py-5 text-slate-300">
+                                    <td className="px-6 py-5 text-slate-300">
                                         <div className="flex flex-col">
                                             <span className="text-xs">{e.email}</span>
                                             <span className="text-[10px] text-slate-500">{e.phone}</span>
                                         </div>
                                     </td>
-                                    {activeTab === 'SUPPLIERS' && <td className="px-8 py-5 text-slate-400 text-xs">{e.supplier_category || '-'}</td>}
-                                    <td className="px-8 py-5 text-right">
+                                    {activeTab === 'SUPPLIERS' && <td className="px-6 py-5 text-slate-400 text-xs">{e.supplier_category || '-'}</td>}
+                                    <td className="px-6 py-5 text-right">
                                         <div className="flex justify-end gap-2">
                                             <button onClick={() => handleEditEntity(e)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><Edit size={16} /></button>
                                             <button onClick={() => handleDeleteEntity(e.id)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
@@ -416,6 +620,41 @@ const Registrations: React.FC = () => {
                                     <td className="px-8 py-5 text-slate-300 font-mono">{s.start_time?.slice(0, 5)} - {s.end_time?.slice(0, 5)}</td>
                                     <td className="px-8 py-5 text-right">
                                         <button onClick={() => { setEditingShiftId(s.id); setShiftInitialData(s); setIsShiftFormOpen(true); }} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><Edit size={16} /></button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {activeTab === 'JUSTIFICATIONS' && justifications.filter(j => {
+                                if (!searchTerm) return true;
+                                return j.name.toLowerCase().includes(searchTerm.toLowerCase()) || j.code.toLowerCase().includes(searchTerm.toLowerCase());
+                            }).map(j => (
+                                <tr key={j.id} className="hover:bg-slate-800/30 transition-colors">
+                                    <td className="px-8 py-5">
+                                        <div className="font-bold text-white">{j.name}</div>
+                                        {j.description && <div className="text-[10px] text-slate-500">{j.description}</div>}
+                                    </td>
+                                    <td className="px-8 py-5">
+                                        <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-1 rounded">{j.code}</span>
+                                    </td>
+                                    <td className="px-8 py-5">
+                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${j.excuses_absence ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                            {j.excuses_absence ? 'Sim' : 'Não'}
+                                        </span>
+                                    </td>
+                                    <td className="px-8 py-5">
+                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${j.affects_dsr ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                                            {j.affects_dsr ? 'Sim' : 'Não'}
+                                        </span>
+                                    </td>
+                                    <td className="px-8 py-5">
+                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${j.active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                            {j.active ? 'Ativo' : 'Inativo'}
+                                        </span>
+                                    </td>
+                                    <td className="px-8 py-5 text-right">
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => handleEditJustification(j)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white hover:bg-blue-600 transition-colors"><Edit size={16} /></button>
+                                            <button onClick={() => handleDeleteJustification(j.id)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white hover:bg-red-600 transition-colors"><Trash2 size={16} /></button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -646,7 +885,7 @@ const Registrations: React.FC = () => {
                                     <button onClick={handleAddContact} className="w-full py-2 bg-blue-600/20 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold transition-colors">+ Adicionar</button>
                                 </div>
                                 <div className="space-y-2">
-                                    {entityForm.contacts?.map((c, idx) => (
+                                    {(Array.isArray(entityForm.contacts) ? entityForm.contacts : typeof entityForm.contacts === 'string' ? JSON.parse(entityForm.contacts) : [])?.map((c, idx) => (
                                         <div key={idx} className="flex items-center justify-between bg-slate-900 p-3 rounded-xl border border-slate-800 hover:border-slate-700">
                                             <div>
                                                 <p className="text-sm font-bold text-white">{c.name}</p>
@@ -685,6 +924,91 @@ const Registrations: React.FC = () => {
             {isShiftFormOpen && (
                 <WorkShiftForm shiftId={editingShiftId} initialData={shiftInitialData} onClose={() => setIsShiftFormOpen(false)} onSuccess={() => { setIsShiftFormOpen(false); fetchShifts(); }} />
             )}
+
+            {/* MODAL JUSTIFICATIVAS */}
+            <Modal
+                isOpen={isJustModalOpen}
+                onClose={() => setIsJustModalOpen(false)}
+                title={editingJustId ? 'Editar Justificativa' : 'Nova Justificativa'}
+                size="md"
+            >
+                <div className="space-y-4">
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Nome *</label>
+                        <input
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
+                            placeholder="Ex: Atestado"
+                            value={justForm.name || ''}
+                            onChange={e => setJustForm({ ...justForm, name: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Código *</label>
+                        <input
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none font-mono uppercase"
+                            placeholder="Ex: ATESTADO"
+                            value={justForm.code || ''}
+                            onChange={e => setJustForm({ ...justForm, code: e.target.value.toUpperCase().replace(/\s/g, '_') })}
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Descrição</label>
+                        <textarea
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none h-20 resize-none"
+                            placeholder="Descrição opcional..."
+                            value={justForm.description || ''}
+                            onChange={e => setJustForm({ ...justForm, description: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                        <label className="flex items-center gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={justForm.excuses_absence !== false}
+                                onChange={e => setJustForm({ ...justForm, excuses_absence: e.target.checked })}
+                                className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <div>
+                                <span className="text-sm font-bold text-white">Abona Falta</span>
+                                <p className="text-[10px] text-slate-500">Zera as horas faltantes</p>
+                            </div>
+                        </label>
+
+                        <label className="flex items-center gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={justForm.affects_dsr || false}
+                                onChange={e => setJustForm({ ...justForm, affects_dsr: e.target.checked })}
+                                className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-amber-600 focus:ring-amber-500"
+                            />
+                            <div>
+                                <span className="text-sm font-bold text-white">Afeta DSR</span>
+                                <p className="text-[10px] text-slate-500">Perde DSR mesmo justificado</p>
+                            </div>
+                        </label>
+                    </div>
+
+                    <label className="flex items-center gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={justForm.active !== false}
+                            onChange={e => setJustForm({ ...justForm, active: e.target.checked })}
+                            className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm font-bold text-white">Ativo</span>
+                    </label>
+
+                    <div className="pt-4 flex gap-3 border-t border-slate-800">
+                        <button onClick={() => setIsJustModalOpen(false)} className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-colors">Cancelar</button>
+                        <button onClick={handleSaveJustification} className="flex-[2] py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2">
+                            <Save size={18} /> Salvar
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

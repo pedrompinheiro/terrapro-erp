@@ -19,6 +19,8 @@ export interface ContaPagar {
     data_emissao: string;
     data_vencimento: string;
     data_pagamento?: string;
+    competencia?: string;
+    data_liquidacao?: string;
     plano_contas_id?: string;
     centro_custo_id?: string;
     categoria?: string;
@@ -33,6 +35,15 @@ export interface ContaPagar {
     parcela_total?: number;
     titulo_pai_id?: string;
     conciliado?: boolean;
+    origem_tipo?: string;
+    origem_id?: string;
+    tipo_documento?: string;
+    numero_nf?: string;
+    created_by?: string;
+    updated_by?: string;
+    canceled_by?: string;
+    motivo_cancelamento?: string;
+    filial_id?: string;
 }
 
 export interface ParcelamentoConfig {
@@ -52,6 +63,7 @@ class PaymentService {
         data_inicio?: string;
         data_fim?: string;
         vencidas?: boolean;
+        filial_id?: string;
     }) {
         let query = supabase
             .from('contas_pagar')
@@ -62,6 +74,10 @@ class PaymentService {
         centro_custo:centros_custo(codigo, nome)
       `)
             .order('data_vencimento', { ascending: false });
+
+        if (filtros?.filial_id) {
+            query = query.eq('filial_id', filtros.filial_id);
+        }
 
         if (filtros?.fornecedor_id) {
             query = query.eq('fornecedor_id', filtros.fornecedor_id);
@@ -99,9 +115,34 @@ class PaymentService {
             conta.numero_titulo = await this.gerarNumeroTitulo();
         }
 
+        // Preencher competencia automaticamente (fallback = mês do vencimento)
+        if (!conta.competencia && conta.data_vencimento) {
+            conta.competencia = conta.data_vencimento.substring(0, 7) + '-01';
+        }
+
+        // Preencher origem_tipo se não fornecido
+        if (!conta.origem_tipo) {
+            conta.origem_tipo = 'MANUAL';
+        }
+
         const { data, error } = await supabase
             .from('contas_pagar')
             .insert(conta)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
+     * Atualizar conta a pagar existente
+     */
+    async atualizar(id: string, dados: Partial<ContaPagar>) {
+        const { data, error } = await supabase
+            .from('contas_pagar')
+            .update(dados)
+            .eq('id', id)
             .select()
             .single();
 
@@ -181,6 +222,7 @@ class PaymentService {
             .update({
                 valor_pago: dados.valor_pago,
                 data_pagamento: dados.data_pagamento,
+                data_liquidacao: dados.data_pagamento,
                 forma_pagamento: dados.forma_pagamento,
                 banco_id: dados.banco_id,
                 observacao: dados.observacao,
@@ -200,7 +242,9 @@ class PaymentService {
                 valor: -dados.valor_pago,
                 tipo_movimento: 'DEBITO',
                 origem: 'PAGAMENTO',
+                tipo_origem: 'PAGAMENTO',
                 lancamento_financeiro_id: id,
+                lancamento_id: id,
                 lancamento_tipo: 'PAGAR',
             });
 
@@ -230,6 +274,7 @@ class PaymentService {
             .from('contas_pagar')
             .update({
                 status: 'CANCELADO',
+                motivo_cancelamento: motivo,
                 observacao: `CANCELADO: ${motivo}`,
             })
             .eq('id', id)

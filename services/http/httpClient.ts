@@ -2,7 +2,7 @@
 import { handleMockRequest } from './mockAdapter';
 
 // In a real app, this would be determined by env vars
-const USE_MOCK = true;
+const USE_MOCK = false;
 const BASE_URL = 'https://api.terrapro.com/v1';
 
 interface RequestConfig extends RequestInit {

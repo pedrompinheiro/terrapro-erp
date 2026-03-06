@@ -37,20 +37,26 @@ class BankingService {
             // Gerar hash único para evitar duplicatas
             const hash = this.gerarHash(conta_id, mov);
 
-            // Verificar se já existe
+            // Verificar se já existe na tabela extrato_bancario
             const { data: existe } = await supabase
-                .from('movimentos_bancarios')
+                .from('extrato_bancario')
                 .select('id')
                 .eq('hash_linha', hash)
                 .single();
 
             if (existe) continue; // Pular duplicata
 
+            // Gravar em extrato_bancario (tabela de PROVA do banco)
             const { data } = await supabase
-                .from('movimentos_bancarios')
+                .from('extrato_bancario')
                 .insert({
                     conta_bancaria_id: conta_id,
-                    ...mov,
+                    data_movimento: mov.data_movimento,
+                    historico: mov.historico,
+                    valor: mov.valor,
+                    numero_documento: mov.numero_documento,
+                    tipo_movimento: mov.tipo_movimento === 'CREDITO' ? 'CREDITO' : 'DEBITO',
+                    origem: 'OFX',
                     hash_linha: hash,
                 })
                 .select()
@@ -114,18 +120,26 @@ class BankingService {
         for (const mov of movimentos) {
             const hash = this.gerarHash(conta_id, mov);
 
+            // Verificar se já existe na tabela extrato_bancario
             const { data: existe } = await supabase
-                .from('movimentos_bancarios')
+                .from('extrato_bancario')
                 .select('id')
                 .eq('hash_linha', hash)
                 .single();
 
             if (existe) continue;
 
+            // Gravar em extrato_bancario (tabela de PROVA do banco)
             const { data } = await supabase
-                .from('movimentos_bancarios')
+                .from('extrato_bancario')
                 .insert({
-                    ...mov,
+                    conta_bancaria_id: conta_id,
+                    data_movimento: mov.data_movimento,
+                    historico: mov.historico,
+                    valor: mov.valor,
+                    numero_documento: mov.numero_documento,
+                    tipo_movimento: mov.tipo_movimento === 'CREDITO' ? 'CREDITO' : 'DEBITO',
+                    origem: 'CSV',
                     hash_linha: hash,
                 })
                 .select()
@@ -164,9 +178,9 @@ class BankingService {
 
         if (!conciliacao) throw new Error('Erro ao criar conciliação');
 
-        // Buscar movimentos não conciliados
+        // Buscar itens do extrato importado não conciliados
         const { data: movimentos } = await supabase
-            .from('movimentos_bancarios')
+            .from('extrato_bancario')
             .select('*')
             .eq('conta_bancaria_id', params.conta_bancaria_id)
             .gte('data_movimento', params.data_inicio)
@@ -217,38 +231,37 @@ class BankingService {
     }
 
     /**
-     * Encontrar match para um movimento
+     * Encontrar match para um item do extrato bancario
+     * Conecta extrato_bancario.movimento_vinculado_id -> movimentos_bancarios.id
      */
-    private async encontrarMatch(movimento: any): Promise<any> {
-        const tabela = movimento.tipo_movimento === 'CREDITO' ? 'contas_receber' : 'contas_pagar';
-        const valorField = tabela === 'contas_receber' ? 'valor_saldo' : 'valor_saldo';
+    private async encontrarMatch(extrato: any): Promise<any> {
+        // Buscar movimentos internos nao conciliados na mesma conta
+        const dataInicio = this.subtrairDias(extrato.data_movimento, 5);
+        const dataFim = this.adicionarDias(extrato.data_movimento, 5);
 
-        // Buscar lançamentos próximos
-        const dataInicio = this.subtrairDias(movimento.data_movimento, 5);
-        const dataFim = this.adicionarDias(movimento.data_movimento, 5);
-
-        const { data: lancamentos } = await supabase
-            .from(tabela)
+        const { data: movimentos } = await supabase
+            .from('movimentos_bancarios')
             .select('*')
-            .gte('data_vencimento', dataInicio)
-            .lte('data_vencimento', dataFim)
-            .eq('conciliado', false)
-            .neq('status', 'CANCELADO');
+            .eq('conta_bancaria_id', extrato.conta_bancaria_id)
+            .gte('data_movimento', dataInicio)
+            .lte('data_movimento', dataFim)
+            .eq('conciliado', false);
 
-        if (!lancamentos || lancamentos.length === 0) return null;
+        if (!movimentos || movimentos.length === 0) return null;
 
         let melhorMatch: any = null;
         let melhorScore = 0;
 
-        for (const lanc of lancamentos) {
-            const scores = this.calcularScores(movimento, lanc);
+        for (const mov of movimentos) {
+            const scores = this.calcularScores(extrato, mov);
             const scoreTotal = scores.valor + scores.data + scores.documento;
 
             if (scoreTotal > melhorScore) {
                 melhorScore = scoreTotal;
                 melhorMatch = {
-                    lancamento_id: lanc.id,
-                    lancamento_tipo: tabela === 'contas_receber' ? 'RECEBER' : 'PAGAR',
+                    movimento_id: mov.id,
+                    lancamento_id: mov.lancamento_id || mov.lancamento_financeiro_id,
+                    lancamento_tipo: mov.lancamento_tipo || 'PAGAR',
                     score_valor: scores.valor,
                     score_data: scores.data,
                     score_documento: scores.documento,
@@ -335,27 +348,37 @@ class BankingService {
             .eq('id', sugestao_id)
             .single();
 
-        if (!sugestao) throw new Error('Sugestão não encontrada');
+        if (!sugestao) throw new Error('Sugestao nao encontrada');
 
-        // Marcar movimento como conciliado
+        // Marcar item do extrato como conciliado e vincular ao movimento interno
+        await supabase
+            .from('extrato_bancario')
+            .update({
+                conciliado: true,
+                movimento_vinculado_id: sugestao.movimento_bancario_id,
+                conciliado_em: new Date().toISOString(),
+            })
+            .eq('id', sugestao.extrato_id || sugestao.movimento_bancario_id);
+
+        // Marcar movimento interno como conciliado
         await supabase
             .from('movimentos_bancarios')
             .update({
                 conciliado: true,
-                conciliacao_id: sugestao.conciliacao_id,
-                lancamento_financeiro_id: sugestao.lancamento_id,
-                lancamento_tipo: sugestao.lancamento_tipo,
+                conciliado_em: new Date().toISOString(),
             })
             .eq('id', sugestao.movimento_bancario_id);
 
-        // Marcar lançamento como conciliado
-        const tabela = sugestao.lancamento_tipo === 'RECEBER' ? 'contas_receber' : 'contas_pagar';
-        await supabase
-            .from(tabela)
-            .update({ conciliado: true, conciliacao_id: sugestao.conciliacao_id })
-            .eq('id', sugestao.lancamento_id);
+        // Marcar lancamento financeiro como conciliado
+        if (sugestao.lancamento_id) {
+            const tabela = sugestao.lancamento_tipo === 'RECEBER' ? 'contas_receber' : 'contas_pagar';
+            await supabase
+                .from(tabela)
+                .update({ conciliado: true })
+                .eq('id', sugestao.lancamento_id);
+        }
 
-        // Marcar sugestão como aceita
+        // Marcar sugestao como aceita
         await supabase
             .from('conciliacao_sugestoes')
             .update({ status: 'ACEITA', aceita_em: new Date().toISOString() })

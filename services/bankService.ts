@@ -30,13 +30,18 @@ class BankService {
     /**
      * Listar todas as contas bancárias ativas
      */
-    async listar() {
-        const { data, error } = await supabase
+    async listar(filial_id?: string) {
+        let query = supabase
             .from('contas_bancarias')
             .select('*')
             .eq('ativa', true)
             .order('padrao', { ascending: false });
 
+        if (filial_id) {
+            query = query.eq('filial_id', filial_id);
+        }
+
+        const { data, error } = await query;
         if (error) throw error;
         return data as ContaBancaria[];
     }
