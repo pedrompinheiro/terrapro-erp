@@ -1,7 +1,7 @@
 # CONTEXTO DO PROJETO TERRAPRO ERP - SESSAO ATIVA
 
 > **IMPORTANTE**: Este arquivo deve ser lido no inicio de cada sessao para recuperar o contexto.
-> Ultima atualizacao: 2026-03-04
+> Ultima atualizacao: 2026-03-05
 
 ---
 
@@ -79,10 +79,10 @@
   - Banco: tabela `absence_justifications` (Atestado, Chuva, Dispensado, Sobreaviso)
   - Banco: coluna `justification2` em `time_entries` para periodo 2
 
-### 7. Financeiro — FASE 1 COMPLETA (Sessao 2026-03-04)
+### 7. Financeiro — FASE 1 COMPLETA + IMPORTACAO (Sessao 2026-03-04/05)
 - **Pagina**: `pages/Financial.tsx` — Reescrito como container modular (~430 linhas vs 1523 original)
 - **5 Sub-componentes extraidos**:
-  - `pages/FinancialDashboard.tsx` — Painel principal
+  - `pages/FinancialDashboard.tsx` — Painel principal (com icone Paperclip para documentos anexados)
   - `pages/FinancialSettle.tsx` — Baixa de titulos
   - `pages/FinancialDRE.tsx` — Demonstracao de resultados
   - `pages/FinancialCostCenters.tsx` — Centros de custo
@@ -94,9 +94,20 @@
   - `services/transferenciaService.ts` — Transferencias entre contas
 - **Edge Function**: `supabase/functions/verify-admin-password/index.ts` — Deployada
 - **SQL**: `migrations/20260303_fase1_fundacao.sql` — DDL completa (497 linhas)
+- **SQL**: `migrations/20260305_anexo_url.sql` — Coluna anexo_url em contas_pagar e contas_receber
+- **Componente**: `components/ImportStatementModal.tsx` — Import CSV de faturas (Bradesco, etc)
+- **Componente**: `components/TransactionFormModal.tsx` — Anexo de documentos (PDF, XLS, etc)
 - **Pagina**: `pages/Billing.tsx` - Faturamento
 - **Servicos**: bankService.ts, bankingService.ts, cnabService.ts, paymentService.ts, receivableService.ts
 - **SQL**: `sql/setup_financeiro_completo.sql`, `sql/seed_bank_accounts.sql`, `sql/migrate_centros_custo_dre.sql`
+- **Funcionalidades de importacao/anexo (2026-03-05)**:
+  - Botao "Importar" (laranja) no header do Financeiro
+  - Modal ImportStatementModal: upload CSV com drag&drop, preview com checkboxes, config fornecedor/centro de custo/categoria/vencimento, batch insert em contas_pagar
+  - Suporte a formatos Bradesco (data,lancamento,valor) com deteccao de BOM, headers, linhas de credito
+  - Anexo de documentos no TransactionFormModal (PDF, XLS, XLSX, CSV, JPG, PNG, DOC, DOCX)
+  - Upload para Supabase Storage bucket `integration-docs` prefixo `financial/`
+  - Icone Paperclip no FinancialDashboard para documentos anexados (abre em nova aba)
+  - Fallback graceful se coluna `anexo_url` nao existir (retry sem o campo)
 
 ### 8. Manutencao
 - **Pagina**: `pages/Maintenance.tsx` - Supabase (nao mais mock)
@@ -134,7 +145,7 @@
 | Almoxarifado | inventory_items (1881), inventory_categories (53), inventory_brands (50), inventory_movements, service_orders (994), service_order_items (2543), purchase_orders (1941), purchase_order_items (4572), technicians (36) |
 | RH | employees, time_entries, work_shifts |
 | Frota | assets, fuel_records |
-| Financeiro | centros_custo, bank_accounts, financial_transactions |
+| Financeiro | centros_custo, bank_accounts, financial_transactions, contas_pagar (com anexo_url), contas_receber (com anexo_url) |
 | Admin | user_profiles, system_settings |
 | Geral | entities (clientes/fornecedores) |
 
@@ -185,6 +196,7 @@
 | seed_bank_accounts.sql | Executado |
 | seed_centros_custo_terra_maquinas.sql | Executado |
 | setup_rbac.sql | Executado |
+| 20260305_anexo_url.sql | Executado (via API) |
 
 ---
 
@@ -376,3 +388,100 @@ RewriteRule . /index.html [L]
 **Vite dev port**: 3000
 **Worktree path**: `/Users/pedromi/Downloads/terrapro-erp---gestão-de-ativos/.claude/worktrees/strange-poincare/`
 **Main repo path**: `/Users/pedromi/Downloads/terrapro-erp---gestão-de-ativos/`
+
+---
+
+## SESSAO 2026-03-05 — RESUMO DE ALTERACOES
+
+### Branch: `claude/strange-poincare` → merged to `main`
+
+**PRs realizados:**
+1. **PR #5** — Importacao de extratos e anexo de documentos no Financeiro (merged)
+2. Commits diretos no `main` — Fix inventario status + Fix NF import fallback
+
+**O que foi feito nesta sessao:**
+
+### 1. Importacao de Extratos Bancarios (CSV)
+- **Novo componente**: `components/ImportStatementModal.tsx` (517 linhas)
+- Modal completo para importar faturas de cartao de credito / extratos bancarios
+- Upload CSV com drag & drop, preview com tabela e checkboxes
+- Detecta automaticamente linhas de credito/pagamento (valores negativos) e marca em cinza com badge "CREDITO"
+- Config por lote: Fornecedor, Centro de Custo, Categoria (plano de contas), Vencimento
+- Batch insert em `contas_pagar` (lotes de 50)
+- Upload do arquivo original para Supabase Storage (`integration-docs/financial/`)
+- Formato suportado: Bradesco CSV (data,lancamento,valor) com deteccao de BOM e headers
+- Fallback: se coluna `anexo_url` nao existir, faz retry sem o campo
+
+### 2. Anexo de Documentos em Lancamentos
+- **Modificado**: `components/TransactionFormModal.tsx`
+- Novo campo de upload de arquivo (PDF, XLS, XLSX, CSV, JPG, PNG, DOC, DOCX)
+- Area clicavel com icone Paperclip, mostra nome + tamanho do arquivo
+- Upload para Supabase Storage antes do insert
+- Adiciona `anexo_url` no payload da transacao
+- Fallback graceful para parcelas e lancamentos unicos
+
+### 3. Botao Importar no Financeiro
+- **Modificado**: `pages/Financial.tsx`
+- Botao laranja "Importar" no header ao lado de "Novo Lancamento"
+- Abre ImportStatementModal
+
+### 4. Icone de Documento Anexado no Dashboard
+- **Modificado**: `pages/FinancialDashboard.tsx`
+- Icone Paperclip clicavel ao lado da descricao quando tem `anexo_url`
+- Abre documento em nova aba
+
+### 5. Migracao SQL — Coluna anexo_url
+- **Novo**: `migrations/20260305_anexo_url.sql`
+- ALTER TABLE contas_pagar ADD COLUMN IF NOT EXISTS anexo_url TEXT
+- ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS anexo_url TEXT
+- Indexes para non-null anexo_url
+- Executado via Supabase Management API
+
+### 6. Fix Inventario — Campo `status` Computado
+- **Modificado**: `services/inventoryService.ts`
+- **Bug**: Campo `status` era calculado por `computeStatus()`/`enrichItem()` apos fetch do banco
+- Ao editar, `openEditModal` espalhava `{...item}` incluindo `status` no formData
+- `handleSave` enviava `status` para Supabase que rejeitava (coluna nao existe)
+- **Fix**: Destructure `status` antes do insert/update:
+  ```typescript
+  const { status, ...cleanItem } = item as any; // createItem
+  const { status, ...cleanUpdates } = updates as any; // updateItem
+  ```
+
+### 7. Fix NF Import — Fallback Client-Side
+- **Modificado**: `components/inventory/NfImportModal.tsx`
+- **Bug**: Edge Function `nfe-parser` falhava com "Failed to send a request to the Edge Function"
+- **Fix**: Adicionado fallback client-side usando `generateWithImage()` do `lib/aiService.ts`
+- Se Edge Function falhar, chama Gemini direto do browser com prompt de extracao de NF
+- Tenta `generateWithImage()` (multimodal) primeiro, fallback para `generateText()` com base64 truncado
+- Melhorada mensagem de erro para consulta SEFAZ (certificado digital)
+
+**Arquivos chave modificados/criados nesta sessao:**
+| Arquivo | Acao |
+|---------|------|
+| components/ImportStatementModal.tsx | Novo (517 linhas) |
+| components/TransactionFormModal.tsx | Modificado (upload anexo) |
+| pages/Financial.tsx | Modificado (botao Importar) |
+| pages/FinancialDashboard.tsx | Modificado (icone Paperclip) |
+| migrations/20260305_anexo_url.sql | Novo |
+| services/inventoryService.ts | Fix (strip status field) |
+| components/inventory/NfImportModal.tsx | Fix (AI fallback client-side) |
+
+**Erros encontrados e resolvidos:**
+- Inventario "Could not find the 'status' column" → strip computed field antes do save
+- NF Import "Failed to send a request to the Edge Function" → fallback AI client-side
+- Build warnings de chunk size (cosmetico, nao erro)
+
+**Deploy:**
+- Build gerado com sucesso
+- Zip em `~/Downloads/terrapro-dist.zip` pronto para upload no cPanel HostGator
+- Inclui todas as correcoes (inventario status + NF import + importacao financeira)
+
+**Pendencias para proxima sessao:**
+- Upload do zip no cPanel HostGator (usuario faz manualmente)
+- Modulo de Folha de Pagamento / Ponto Eletronico via PDF — usuario enviou PDFs de ponto (MeP e CONSTRUTERRA) e perguntou o que pode ser automatizado:
+  - Import de PDF de ponto com OCR (AI) para extrair batidas
+  - Cadastro de funcionarios a partir do PDF
+  - Calculo automatico de folha a partir das horas
+  - Geracao de contas a pagar para pagamento de funcionarios
+  - Cross-reference com registros existentes de employees
