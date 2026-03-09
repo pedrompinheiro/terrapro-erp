@@ -653,7 +653,7 @@ export const inventoryService = {
         service_order_id: serviceOrderId,
         order_number: orderNumber,
         item_id: item.item_id || null,
-        product_code: item.product_code ?? null,
+        product_code: item.product_code != null ? Math.floor(Number(item.product_code)) : null,
         description: item.description,
         reference: item.reference || null,
         is_service: item.is_service,
