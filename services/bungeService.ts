@@ -218,6 +218,48 @@ class BungeService {
     if (error) throw error;
   }
 
+  async criarItemContrato(item: {
+    contract_id: string;
+    equipment_description: string;
+    billing_type: 'MENSALIDADE' | 'HE' | 'LOCACAO_DIARIA' | 'LOCACAO_MENSAL';
+    unit_value: number;
+    unit_label: string;
+    notes?: string | null;
+    asset_id?: string | null;
+  }): Promise<BungeContractItem> {
+    // Buscar maior sort_order existente
+    const { data: existing } = await supabase
+      .from('bunge_contract_items')
+      .select('sort_order')
+      .eq('contract_id', item.contract_id)
+      .order('sort_order', { ascending: false })
+      .limit(1);
+
+    const nextOrder = (existing?.[0]?.sort_order || 0) + 1;
+
+    const { data, error } = await supabase
+      .from('bunge_contract_items')
+      .insert({
+        ...item,
+        sort_order: nextOrder,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  async excluirItemContrato(itemId: string): Promise<void> {
+    const { error } = await supabase
+      .from('bunge_contract_items')
+      .update({ is_active: false })
+      .eq('id', itemId);
+
+    if (error) throw error;
+  }
+
   // ---- FUNCIONÁRIOS (para seleção de operadores HE) ----
 
   async listarFuncionarios(): Promise<{ id: string; full_name: string }[]> {
