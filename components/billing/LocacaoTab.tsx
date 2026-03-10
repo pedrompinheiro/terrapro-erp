@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Truck, Download, DollarSign, Plus, Minus, AlertTriangle, CheckCircle, PlusCircle, Pencil, Trash2, Save, X } from 'lucide-react';
 import { bungeService, BungeContractItem, BungeBilling, BungeBillingItem, LocacaoItemInput, formatCurrency, formatMonthYear } from '../../services/bungeService';
 import { exportLocacaoPDF, exportBillingXLS } from '../../services/bungeExportService';
+import FaturarModal from './FaturarModal';
 import { toast } from 'react-hot-toast';
 
 interface Props {
@@ -47,6 +48,7 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [newItem, setNewItem] = useState<NewItemForm>(EMPTY_NEW_ITEM);
   const [savingNewItem, setSavingNewItem] = useState(false);
+  const [showFaturarModal, setShowFaturarModal] = useState(false);
 
   const nameInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -340,11 +342,12 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
     }
   };
 
-  const handleFaturar = async () => {
+  const handleFaturar = async (anexos: { pedido_compra: string | null; nota_fiscal: string | null; nota_locacao: string | null; }) => {
     if (!existingBilling) return;
     try {
-      await bungeService.faturar(existingBilling.id);
+      await bungeService.faturar(existingBilling.id, anexos);
       toast.success('Faturado! Conta a receber criada.');
+      setShowFaturarModal(false);
       await loadData();
     } catch (err: any) {
       toast.error(err.message || 'Erro ao faturar');
@@ -409,7 +412,7 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
             </button>
             {existingBilling.status !== 'FATURADO' && existingBilling.status !== 'RECEBIDO' && (
               <button
-                onClick={handleFaturar}
+                onClick={() => setShowFaturarModal(true)}
                 className="bg-amber-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-amber-500 transition-all flex items-center gap-2"
               >
                 <DollarSign size={18} />
@@ -720,6 +723,16 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
           </div>
         )}
       </div>
+      {existingBilling && (
+        <FaturarModal
+          isOpen={showFaturarModal}
+          billingNumber={existingBilling.billing_number}
+          billingType="LOCACAO"
+          total={existingBilling.total}
+          onConfirm={handleFaturar}
+          onClose={() => setShowFaturarModal(false)}
+        />
+      )}
     </div>
   );
 };

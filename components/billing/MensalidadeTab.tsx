@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { FileText, Download, DollarSign, AlertTriangle, CheckCircle } from 'lucide-react';
 import { bungeService, BungeContractItem, BungeBilling, BungeBillingItem, formatCurrency, formatMonthYear } from '../../services/bungeService';
 import { exportMensalidadePDF, exportBillingXLS } from '../../services/bungeExportService';
+import FaturarModal from './FaturarModal';
 import { toast } from 'react-hot-toast';
 
 interface Props {
@@ -18,6 +19,7 @@ const MensalidadeTab: React.FC<Props> = ({ contractId }) => {
   const [billingItems, setBillingItems] = useState<BungeBillingItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [showFaturarModal, setShowFaturarModal] = useState(false);
 
   useEffect(() => {
     if (contractId) loadData();
@@ -82,11 +84,12 @@ const MensalidadeTab: React.FC<Props> = ({ contractId }) => {
     }
   };
 
-  const handleFaturar = async () => {
+  const handleFaturar = async (anexos: { pedido_compra: string | null; nota_fiscal: string | null; nota_locacao: string | null; }) => {
     if (!existingBilling) return;
     try {
-      await bungeService.faturar(existingBilling.id);
+      await bungeService.faturar(existingBilling.id, anexos);
       toast.success('Faturado! Conta a receber criada no Financeiro.');
+      setShowFaturarModal(false);
       await loadData();
     } catch (err: any) {
       toast.error(err.message || 'Erro ao faturar');
@@ -154,7 +157,7 @@ const MensalidadeTab: React.FC<Props> = ({ contractId }) => {
             </button>
             {existingBilling.status !== 'FATURADO' && existingBilling.status !== 'RECEBIDO' && (
               <button
-                onClick={handleFaturar}
+                onClick={() => setShowFaturarModal(true)}
                 className="bg-amber-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-amber-500 transition-all flex items-center gap-2"
               >
                 <DollarSign size={18} />
@@ -238,6 +241,16 @@ const MensalidadeTab: React.FC<Props> = ({ contractId }) => {
           </div>
         )}
       </div>
+      {existingBilling && (
+        <FaturarModal
+          isOpen={showFaturarModal}
+          billingNumber={existingBilling.billing_number}
+          billingType="MENSALIDADE"
+          total={existingBilling.total}
+          onConfirm={handleFaturar}
+          onClose={() => setShowFaturarModal(false)}
+        />
+      )}
     </div>
   );
 };

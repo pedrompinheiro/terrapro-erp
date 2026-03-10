@@ -190,6 +190,27 @@ class BungeService {
     return data || [];
   }
 
+  async criarContrato(contrato: {
+    contract_number: string;
+    client_name: string;
+    cnpj: string;
+    start_date: string;
+    end_date?: string | null;
+    notes?: string | null;
+  }): Promise<BungeContract> {
+    const { data, error } = await supabase
+      .from('bunge_contracts')
+      .insert({
+        ...contrato,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
   // ---- ITENS DO CONTRATO ----
 
   async listarItensContrato(contractId: string, billingType?: string): Promise<BungeContractItem[]> {
@@ -817,7 +838,11 @@ class BungeService {
   // FATURAR → CONTAS A RECEBER
   // ============================================================
 
-  async faturar(billingId: string): Promise<string> {
+  async faturar(billingId: string, anexos?: {
+    pedido_compra?: string | null;
+    nota_fiscal?: string | null;
+    nota_locacao?: string | null;
+  }): Promise<string> {
     const billing = await this.obterFaturamento(billingId);
     if (!billing) throw new Error('Faturamento não encontrado.');
 
@@ -825,7 +850,7 @@ class BungeService {
       throw new Error('Este faturamento já foi faturado.');
     }
 
-    // Buscar contrato para pegar client_id
+    // Buscar contrato para pegar client_id e nome
     const { data: contract } = await supabase
       .from('bunge_contracts')
       .select('client_id, client_name')
@@ -834,26 +859,37 @@ class BungeService {
 
     if (!contract) throw new Error('Contrato não encontrado.');
 
-    // Determinar categoria
-    const categoriaMap: Record<string, string> = {
-      'MENSALIDADE': 'MENSALIDADE BUNGE',
-      'HE': 'HORA EXTRA BUNGE',
-      'LOCACAO': 'LOCAÇÃO BUNGE',
+    // Determinar categoria dinamicamente
+    const tipoLabel: Record<string, string> = {
+      'MENSALIDADE': 'MENSALIDADE',
+      'HE': 'HORA EXTRA',
+      'LOCACAO': 'LOCAÇÃO',
     };
+    const categoria = `${tipoLabel[billing.billing_type] || billing.billing_type} ${contract.client_name.toUpperCase()}`;
+
+    // Montar observação com anexos
+    const obsPartes: string[] = [`Origem: Módulo Faturamento | Nº ${billing.billing_number}`];
+    if (anexos?.pedido_compra) obsPartes.push(`Pedido de Compra: ${anexos.pedido_compra}`);
+    if (anexos?.nota_fiscal) obsPartes.push(`Nota Fiscal: ${anexos.nota_fiscal}`);
+    if (anexos?.nota_locacao) obsPartes.push(`Nota de Locação: ${anexos.nota_locacao}`);
 
     // Criar conta a receber
-    const contaReceber = {
+    const contaReceber: Record<string, any> = {
       numero_titulo: billing.billing_number,
-      cliente_id: contract.client_id || '',
       cliente_nome: contract.client_name,
       valor_original: billing.total,
       data_emissao: new Date().toISOString().split('T')[0],
       data_vencimento: this.calcularVencimento(billing.reference_month),
-      categoria: categoriaMap[billing.billing_type] || 'FATURAMENTO BUNGE',
-      descricao: `${billing.billing_type} - ${formatMonthYear(billing.reference_month)} - Bunge Alimentos S.A.`,
-      status: 'PENDENTE' as const,
-      observacao: `Origem: Módulo Faturamento Bunge | Nº ${billing.billing_number}`,
+      categoria,
+      descricao: `${tipoLabel[billing.billing_type] || billing.billing_type} - ${formatMonthYear(billing.reference_month)} - ${contract.client_name}`,
+      status: 'PENDENTE',
+      observacao: obsPartes.join(' | '),
     };
+
+    // Só incluir cliente_id se for um UUID válido (não vazio)
+    if (contract.client_id && contract.client_id.trim() !== '') {
+      contaReceber.cliente_id = contract.client_id;
+    }
 
     const { data: novaContaReceber, error: crError } = await supabase
       .from('contas_receber')

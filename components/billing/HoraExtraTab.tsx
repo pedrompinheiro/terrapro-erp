@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Download, DollarSign, Calculator, AlertTriangle, CheckCircle, Save, Users, Edit3, RotateCcw, Trash2, RefreshCw, PlusCircle } from 'lucide-react';
 import { bungeService, BungeContractItem, BungeBilling, BungeBillingItem, HECalcResult, HEDayDetail, formatCurrency, formatMonthYear } from '../../services/bungeService';
 import { exportHEPDF, exportBillingXLS } from '../../services/bungeExportService';
+import FaturarModal from './FaturarModal';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 
@@ -194,6 +195,7 @@ const HoraExtraTab: React.FC<Props> = ({ contractId }) => {
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editMode, setEditMode] = useState(false); // Permite editar ponto mesmo com billing existente
+  const [showFaturarModal, setShowFaturarModal] = useState(false);
   // Set de datas que originalmente tinham dados (para não sumir ao editar)
   const originalDaysWithData = useRef<Set<string>>(new Set());
 
@@ -381,11 +383,12 @@ const HoraExtraTab: React.FC<Props> = ({ contractId }) => {
     catch (err) { toast.error('Erro ao exportar XLS'); }
   };
 
-  const handleFaturar = async () => {
+  const handleFaturar = async (anexos: { pedido_compra: string | null; nota_fiscal: string | null; nota_locacao: string | null; }) => {
     if (!existingBilling) return;
     try {
-      await bungeService.faturar(existingBilling.id);
+      await bungeService.faturar(existingBilling.id, anexos);
       toast.success('Faturado! Conta a receber criada.');
+      setShowFaturarModal(false);
       await loadData();
     } catch (err: any) { toast.error(err.message || 'Erro ao faturar'); }
   };
@@ -550,7 +553,7 @@ const HoraExtraTab: React.FC<Props> = ({ contractId }) => {
             </button>
             {existingBilling.status !== 'FATURADO' && existingBilling.status !== 'RECEBIDO' && (
               <>
-                <button onClick={handleFaturar}
+                <button onClick={() => setShowFaturarModal(true)}
                   className="bg-amber-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-amber-500 transition-all flex items-center gap-2">
                   <DollarSign size={18} /> Faturar
                 </button>
@@ -820,6 +823,16 @@ const HoraExtraTab: React.FC<Props> = ({ contractId }) => {
             </table>
           </div>
         </div>
+      )}
+      {existingBilling && (
+        <FaturarModal
+          isOpen={showFaturarModal}
+          billingNumber={existingBilling.billing_number}
+          billingType="HE"
+          total={existingBilling.total}
+          onConfirm={handleFaturar}
+          onClose={() => setShowFaturarModal(false)}
+        />
       )}
     </div>
   );
