@@ -216,6 +216,34 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
     }));
   };
 
+  // ---- TOGGLE TYPE (DIÁRIA ↔ MENSAL) ----
+  const handleToggleType = async (idx: number) => {
+    if (existingBilling) return;
+    const row = locacaoRows[idx];
+    if (!row) return;
+
+    const currentType = row.contractItem.billing_type;
+    const newType = currentType === 'LOCACAO_DIARIA' ? 'LOCACAO_MENSAL' : 'LOCACAO_DIARIA';
+    const newLabel = newType === 'LOCACAO_DIARIA' ? 'diária' : 'mês';
+
+    try {
+      await bungeService.atualizarItemContrato(row.contractItem.id, {
+        billing_type: newType,
+        unit_label: newLabel,
+      } as any);
+      setLocacaoRows(prev => prev.map((r, i) => {
+        if (i !== idx) return r;
+        return {
+          ...r,
+          contractItem: { ...r.contractItem, billing_type: newType, unit_label: newLabel },
+        };
+      }));
+      toast.success(`Alterado para ${newType === 'LOCACAO_DIARIA' ? 'DIÁRIA' : 'MENSAL'}`);
+    } catch (err) {
+      toast.error('Erro ao alterar tipo');
+    }
+  };
+
   // ---- ADD NEW ITEM ----
   const handleAddNewItem = async () => {
     if (!contractId) return;
@@ -512,14 +540,19 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
                           </div>
                         )}
                       </td>
+                      {/* TYPE - EDITABLE (click to toggle) */}
                       <td className="px-4 py-3">
-                        <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${
-                          row.contractItem.billing_type === 'LOCACAO_DIARIA'
-                            ? 'bg-amber-500/10 text-amber-400'
-                            : 'bg-purple-500/10 text-purple-400'
-                        }`}>
+                        <button
+                          onClick={() => handleToggleType(idx)}
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all ${
+                            row.contractItem.billing_type === 'LOCACAO_DIARIA'
+                              ? 'bg-amber-500/10 text-amber-400'
+                              : 'bg-purple-500/10 text-purple-400'
+                          }`}
+                          title="Clique para alternar DIÁRIA / MENSAL"
+                        >
                           {row.contractItem.billing_type === 'LOCACAO_DIARIA' ? 'DIÁRIA' : 'MENSAL'}
-                        </span>
+                        </button>
                       </td>
                       {/* UNIT VALUE - EDITABLE */}
                       <td className="px-4 py-3 text-center">
