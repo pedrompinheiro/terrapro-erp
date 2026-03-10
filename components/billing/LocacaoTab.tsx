@@ -94,6 +94,7 @@ const LocacaoTab: React.FC<Props> = ({ contractId }) => {
       .filter(r => r.included && r.quantity > 0)
       .map(r => ({
         contract_item_id: r.contractItem.id,
+        asset_id: r.contractItem.asset_id || null,
         equipment_description: r.contractItem.notes || r.contractItem.equipment_description,
         quantity: r.quantity,
         unit_value: r.contractItem.unit_value,

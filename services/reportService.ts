@@ -11,6 +11,24 @@ interface PeriodoFiltro {
     centro_custo_id?: string;
 }
 
+export interface EquipmentProfitabilityRow {
+    asset_id: string;
+    asset_code: string;
+    asset_name: string;
+    asset_model: string;
+    revenue: number;
+    revenue_count: number;
+    maintenance_cost: number;
+    maintenance_count: number;
+    fuel_cost: number;
+    fuel_liters: number;
+    parts_cost: number;
+    parts_count: number;
+    total_cost: number;
+    net_result: number;
+    margin_percent: number;
+}
+
 class ReportService {
     /**
      * Fluxo de Caixa Consolidado
@@ -414,6 +432,145 @@ class ReportService {
         }
 
         return data;
+    }
+
+    // ============================================================
+    // RENTABILIDADE POR EQUIPAMENTO
+    // Cruza receita (billing) × custos (manutenção + combustível + peças)
+    // ============================================================
+
+    async rentabilidadeEquipamento(params: {
+        data_inicio: string;
+        data_fim: string;
+        asset_id?: string;
+    }): Promise<EquipmentProfitabilityRow[]> {
+        // 1. Buscar assets (todos ou um específico)
+        let assetsQuery = supabase.from('assets').select('id, code, name, model, brand');
+        if (params.asset_id) assetsQuery = assetsQuery.eq('id', params.asset_id);
+        const { data: assets } = await assetsQuery.order('name');
+        if (!assets || assets.length === 0) return [];
+
+        // Converter período YYYY-MM-DD para range de reference_month (YYYY-MM)
+        const startMonth = params.data_inicio.substring(0, 7); // "2026-01"
+        const endMonth = params.data_fim.substring(0, 7);       // "2026-12"
+
+        // 2. Receita: billing items com asset_id
+        const { data: billingData } = await supabase
+            .from('bunge_billing_items')
+            .select(`
+                asset_id,
+                total_value,
+                billing:bunge_billings!billing_id(reference_month, status)
+            `)
+            .not('asset_id', 'is', null);
+
+        // 3. Manutenção: OS completadas no período
+        const { data: maintenanceData } = await supabase
+            .from('maintenance_os')
+            .select('asset_id, total_cost, opened_at')
+            .gte('opened_at', params.data_inicio + 'T00:00:00')
+            .lte('opened_at', params.data_fim + 'T23:59:59')
+            .eq('status', 'COMPLETED');
+
+        // 4. Combustível: abastecimentos (OUT) no período
+        const { data: fuelData } = await supabase
+            .from('fuel_records')
+            .select('asset_id, total_value, liters, date')
+            .eq('operation_type', 'OUT')
+            .not('asset_id', 'is', null)
+            .gte('date', params.data_inicio)
+            .lte('date', params.data_fim);
+
+        // 5. Peças/estoque: saídas para equipamento no período
+        const { data: movData } = await supabase
+            .from('inventory_movements')
+            .select('equipment_id, total_value, created_at')
+            .not('equipment_id', 'is', null)
+            .in('movement_type', ['SAIDA_OS', 'SAIDA_EQUIPAMENTO', 'SAIDA_CONSUMO_INTERNO'])
+            .gte('created_at', params.data_inicio + 'T00:00:00')
+            .lte('created_at', params.data_fim + 'T23:59:59');
+
+        // 6. Agregar por asset_id
+        const assetMap = new Map<string, EquipmentProfitabilityRow>();
+
+        for (const asset of assets) {
+            assetMap.set(asset.id, {
+                asset_id: asset.id,
+                asset_code: asset.code || '',
+                asset_name: asset.name || '',
+                asset_model: asset.model || '',
+                revenue: 0,
+                revenue_count: 0,
+                maintenance_cost: 0,
+                maintenance_count: 0,
+                fuel_cost: 0,
+                fuel_liters: 0,
+                parts_cost: 0,
+                parts_count: 0,
+                total_cost: 0,
+                net_result: 0,
+                margin_percent: 0,
+            });
+        }
+
+        // Processar receitas (filtrar por reference_month no range)
+        billingData?.forEach((item: any) => {
+            if (!item.asset_id || !assetMap.has(item.asset_id)) return;
+            const billing = item.billing as any;
+            if (!billing || billing.status === 'CANCELADO') return;
+            const refMonth = billing.reference_month;
+            if (refMonth < startMonth || refMonth > endMonth) return;
+            const row = assetMap.get(item.asset_id)!;
+            row.revenue += item.total_value || 0;
+            row.revenue_count += 1;
+        });
+
+        // Processar manutenção
+        maintenanceData?.forEach((os: any) => {
+            if (!os.asset_id || !assetMap.has(os.asset_id)) return;
+            const row = assetMap.get(os.asset_id)!;
+            row.maintenance_cost += os.total_cost || 0;
+            row.maintenance_count += 1;
+        });
+
+        // Processar combustível
+        fuelData?.forEach((fuel: any) => {
+            if (!fuel.asset_id || !assetMap.has(fuel.asset_id)) return;
+            const row = assetMap.get(fuel.asset_id)!;
+            row.fuel_cost += fuel.total_value || 0;
+            row.fuel_liters += fuel.liters || 0;
+        });
+
+        // Processar peças/estoque
+        movData?.forEach((mov: any) => {
+            if (!mov.equipment_id || !assetMap.has(mov.equipment_id)) return;
+            const row = assetMap.get(mov.equipment_id)!;
+            row.parts_cost += mov.total_value || 0;
+            row.parts_count += 1;
+        });
+
+        // Calcular totais e margens
+        const results = Array.from(assetMap.values())
+            .map(row => {
+                row.total_cost = row.maintenance_cost + row.fuel_cost + row.parts_cost;
+                row.net_result = row.revenue - row.total_cost;
+                row.margin_percent = row.revenue > 0
+                    ? Math.round((row.net_result / row.revenue) * 10000) / 100
+                    : (row.total_cost > 0 ? -100 : 0);
+                // Arredondar valores
+                row.revenue = Math.round(row.revenue * 100) / 100;
+                row.maintenance_cost = Math.round(row.maintenance_cost * 100) / 100;
+                row.fuel_cost = Math.round(row.fuel_cost * 100) / 100;
+                row.parts_cost = Math.round(row.parts_cost * 100) / 100;
+                row.total_cost = Math.round(row.total_cost * 100) / 100;
+                row.net_result = Math.round(row.net_result * 100) / 100;
+                return row;
+            })
+            // Filtrar apenas equipamentos com algum movimento
+            .filter(row => row.revenue > 0 || row.total_cost > 0)
+            .sort((a, b) => b.net_result - a.net_result);
+
+        return results;
     }
 
     /**

@@ -68,6 +68,7 @@ export interface BungeBillingItem {
   id: string;
   billing_id: string;
   contract_item_id: string | null;
+  asset_id: string | null;
   equipment_description: string;
   quantity: number;
   unit_label: string;
@@ -112,6 +113,7 @@ export interface HECalcResult {
 
 export interface LocacaoItemInput {
   contract_item_id: string;
+  asset_id?: string | null;
   equipment_description: string;
   quantity: number;
   unit_value: number;
@@ -344,6 +346,7 @@ class BungeService {
     const billingItems = itens.map((item, idx) => ({
       billing_id: billing.id,
       contract_item_id: item.id,
+      asset_id: item.asset_id || null,
       equipment_description: item.equipment_description,
       quantity: 1,
       unit_label: item.unit_label,
@@ -573,13 +576,18 @@ class BungeService {
 
     if (billingError) throw billingError;
 
+    // Buscar item HE do contrato para pegar asset_id
+    const itensHE = await this.listarItensContrato(contractId, 'HE');
+    const itemHE = itensHE[0] || null;
+
     // Criar item do faturamento
     const { error: itemError } = await supabase
       .from('bunge_billing_items')
       .insert({
         billing_id: billing.id,
-        contract_item_id: null,
-        equipment_description: 'L-60F (Farelo)',
+        contract_item_id: itemHE?.id || null,
+        asset_id: itemHE?.asset_id || null,
+        equipment_description: itemHE?.equipment_description || 'L-60F (Farelo)',
         quantity: 1,
         unit_label: 'hora',
         unit_value: heCalc.ratePerHour,
@@ -629,12 +637,17 @@ class BungeService {
 
     if (billingError) throw billingError;
 
+    // Buscar item HE do contrato para asset_id
+    const itensHE = await this.listarItensContrato(contractId, 'HE');
+    const itemHE = itensHE[0] || null;
+
     const { error: itemError } = await supabase
       .from('bunge_billing_items')
       .insert({
         billing_id: billing.id,
-        contract_item_id: null,
-        equipment_description: 'L-60F (Farelo)',
+        contract_item_id: itemHE?.id || null,
+        asset_id: itemHE?.asset_id || null,
+        equipment_description: itemHE?.equipment_description || 'L-60F (Farelo)',
         quantity: 1,
         unit_label: 'hora',
         unit_value: heCalc.ratePerHour,
@@ -692,6 +705,7 @@ class BungeService {
     const billingItems = itens.map((item, idx) => ({
       billing_id: billing.id,
       contract_item_id: item.contract_item_id,
+      asset_id: item.asset_id || null,
       equipment_description: item.equipment_description,
       quantity: item.quantity,
       unit_label: item.unit_label,

@@ -1,8 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
-import { DollarSign, Clock, Filter, Download, Briefcase, Wrench, Package, Truck, Wallet, FileText, Calendar, Users, TrendingUp, AlertTriangle, Fuel } from 'lucide-react';
+import { DollarSign, Clock, Filter, Download, Briefcase, Wrench, Package, Truck, Wallet, FileText, Calendar, Users, TrendingUp, AlertTriangle, Fuel, BarChart3 } from 'lucide-react';
 import StatCard from '../components/StatCard';
+import EquipmentProfitabilityReport from '../components/reports/EquipmentProfitabilityReport';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
@@ -36,7 +37,7 @@ const inventoryABC = [
   { name: 'Classe C (Baixo)', value: 10 },
 ];
 
-type ReportTab = 'FINANCIAL' | 'FLEET' | 'HR' | 'INVENTORY' | 'MAINTENANCE';
+type ReportTab = 'FINANCIAL' | 'FLEET' | 'HR' | 'INVENTORY' | 'MAINTENANCE' | 'RENTABILIDADE';
 
 const BIReports: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ReportTab>('FINANCIAL');
@@ -182,6 +183,12 @@ const BIReports: React.FC = () => {
             <p>Em desenvolvimento...</p>
           </div>
         );
+      case 'RENTABILIDADE':
+        return (
+          <div className="animate-in fade-in slide-in-from-bottom-4">
+            <EquipmentProfitabilityReport />
+          </div>
+        );
       default:
         return null;
     }
@@ -211,6 +218,7 @@ const BIReports: React.FC = () => {
         {renderTabButton('HR', 'RH & Pessoal', <Users size={18} />)}
         {renderTabButton('INVENTORY', 'Estoque', <Package size={18} />)}
         {renderTabButton('MAINTENANCE', 'Manutenção', <Wrench size={18} />)}
+        {renderTabButton('RENTABILIDADE', 'Rentabilidade', <BarChart3 size={18} />)}
       </div>
 
       {/* Dynamic Content */}
