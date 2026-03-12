@@ -34,6 +34,7 @@ const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const TimecardCalc = lazy(() => import('./pages/TimecardCalc'));
 const Payroll = lazy(() => import('./pages/Payroll'));
 const Integrations = lazy(() => import('./pages/Integrations'));
+const MaintenancePlan = lazy(() => import('./pages/MaintenancePlan'));
 
 import { supabase } from './lib/supabase';
 import { UserProfile } from './types';
@@ -136,7 +137,7 @@ const App: React.FC = () => {
           <header className="h-16 border-b border-slate-900 bg-slate-950 flex items-center justify-between px-10 sticky top-0 z-40">
             <div className="flex items-center gap-6">
               <div className="text-[10px] font-black text-slate-500 border border-slate-800 px-3 py-1 uppercase tracking-[0.2em] bg-slate-900 shadow-inner">
-                SISTEMA <span className="text-[#007a33]">TERRAPRO</span> v4.2.1
+                SISTEMA <span className="text-[#007a33]">TERRAPRO</span> V4.4.0
               </div>
               <div className="h-4 w-[1px] bg-slate-800"></div>
               <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
@@ -187,6 +188,7 @@ const App: React.FC = () => {
                 <Route path="/ponto/ocr" element={<Timekeeping />} />
                 <Route path="/folha" element={<Payroll />} />
                 <Route path="/integracoes" element={<Integrations />} />
+                <Route path="/maintenance-plan" element={<MaintenancePlan />} />
               </Routes>
             </Suspense>
           </div>

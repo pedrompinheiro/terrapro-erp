@@ -31,6 +31,7 @@ export const NAV_ITEMS = [
   { id: 'map', label: 'Mapa Digital', icon: <MapIcon size={20} />, group: 'Operacional', path: '/map', slug: 'diaria_operadores' },
   { id: 'daily', label: 'Controle Diário', icon: <ClipboardCheck size={20} />, group: 'Operacional', path: '/daily', slug: 'diaria_operadores' },
   { id: 'maintenance', label: 'Manutenção', icon: <Wrench size={20} />, group: 'Operacional', path: '/maintenance', slug: 'frota_manutencao' },
+  { id: 'maintenance-plan', label: 'Plano Manutenção', icon: <ClipboardCheck size={20} />, group: 'Operacional', path: '/maintenance-plan', slug: 'frota_manutencao' },
   { id: 'inventory', label: 'Almoxarifado', icon: <Package size={20} />, group: 'Insumos', path: '/inventory', slug: 'frota_manutencao' },
   { id: 'fuel', label: 'Combustível', icon: <Fuel size={20} />, group: 'Insumos', path: '/fuel', slug: 'controle_diesel' },
   { id: 'hr', label: 'Recursos Humanos', icon: <Users size={20} />, group: 'Gestão', path: '/rh', slug: 'rh_folha_ponto' },
