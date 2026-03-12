@@ -16,6 +16,7 @@ import {
 import { dashboardService } from '../services/api';
 import { ERPDocument, DocumentCategory } from '../types';
 import Modal from '../components/Modal';
+import { smartSearch } from '../lib/smartSearch';
 
 const Documents: React.FC = () => {
     const [documents, setDocuments] = useState<ERPDocument[]>([]);
@@ -80,12 +81,21 @@ const Documents: React.FC = () => {
         }
     };
 
-    const filteredDocs = documents.filter(doc => {
-        const matchesSearch = doc.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            doc.relatedTo?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesCategory = selectedCategory === 'ALL' || doc.category === selectedCategory;
-        return matchesSearch && matchesCategory;
-    });
+    const filteredDocs = (() => {
+        let filtered = documents.filter(doc => {
+            const matchesCategory = selectedCategory === 'ALL' || doc.category === selectedCategory;
+            return matchesCategory;
+        });
+        if (searchTerm.trim()) {
+            filtered = smartSearch(filtered, searchTerm, [
+                { key: 'title', weight: 3 },
+                { key: 'relatedTo', weight: 2 },
+                { key: 'description', weight: 1.5 },
+                { key: 'category', weight: 1 },
+            ]);
+        }
+        return filtered;
+    })();
 
     if (loading) {
         return (

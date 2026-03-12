@@ -8,8 +8,10 @@ import NotasFiscaisSubTab from './NotasFiscaisSubTab';
 import {
   Search, ShoppingCart, Filter, ChevronLeft, ChevronRight, X,
   DollarSign, Truck, Calendar, CheckCircle, XCircle, Package, Phone, User,
-  FileText, ClipboardList,
+  FileText, ClipboardList, Plus, Loader2, Save, Trash2,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/supabaseUtils';
 
 const PAGE_SIZE = 50;
 
@@ -56,6 +58,18 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
   const [detailModal, setDetailModal] = useState<PurchaseOrder | null>(null);
   const [detailItems, setDetailItems] = useState<PurchaseOrderItem[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+
+  // Novo Pedido
+  const [newOrderModal, setNewOrderModal] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string; phone?: string }[]>([]);
+  const [newOrder, setNewOrder] = useState({
+    supplier_name: '', supplier_phone: '', order_date: new Date().toISOString().split('T')[0],
+    delivery_date: '', observations: '', payment_form: '', payment_conditions: '',
+  });
+  const [newOrderItems, setNewOrderItems] = useState<{ description: string; unit: string; quantity: number; unit_cost: number }[]>([
+    { description: '', unit: 'UN', quantity: 1, unit_cost: 0 },
+  ]);
 
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -139,6 +153,89 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
     setRetiradasKey(k => k + 1);
   };
 
+  // --- Novo Pedido ---
+  const openNewOrder = async () => {
+    setNewOrder({ supplier_name: '', supplier_phone: '', order_date: new Date().toISOString().split('T')[0], delivery_date: '', observations: '', payment_form: '', payment_conditions: '' });
+    setNewOrderItems([{ description: '', unit: 'UN', quantity: 1, unit_cost: 0 }]);
+    // Carregar fornecedores
+    const data = await fetchAll<{ id: string; name: string; phone?: string }>('entities', { select: 'id, name, phone', order: { column: 'name' } });
+    setSuppliers(data);
+    setNewOrderModal(true);
+  };
+
+  const addOrderItem = () => setNewOrderItems(prev => [...prev, { description: '', unit: 'UN', quantity: 1, unit_cost: 0 }]);
+  const removeOrderItem = (idx: number) => setNewOrderItems(prev => prev.filter((_, i) => i !== idx));
+  const updateOrderItem = (idx: number, field: string, value: any) => {
+    setNewOrderItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
+  };
+
+  const saveNewOrder = async () => {
+    const validItems = newOrderItems.filter(i => i.description.trim());
+    if (!newOrder.supplier_name.trim()) return alert('Informe o fornecedor');
+    if (validItems.length === 0) return alert('Adicione pelo menos 1 item');
+
+    setSavingOrder(true);
+    try {
+      // Gerar próximo número de pedido
+      const { data: maxOrder } = await supabase.from('purchase_orders').select('order_number').order('order_number', { ascending: false }).limit(1).single();
+      const nextNumber = (maxOrder?.order_number || 0) + 1;
+
+      const totalValue = validItems.reduce((sum, i) => sum + (i.quantity * i.unit_cost), 0);
+
+      const { data: order, error } = await supabase.from('purchase_orders').insert({
+        order_number: nextNumber,
+        is_order: true,
+        is_quote: false,
+        order_date: newOrder.order_date,
+        delivery_date: newOrder.delivery_date || null,
+        supplier_name: newOrder.supplier_name,
+        supplier_phone: newOrder.supplier_phone || null,
+        situation: 'Aberto',
+        situation_code: 1,
+        items_count: validItems.length,
+        total_qty: validItems.reduce((s, i) => s + i.quantity, 0),
+        products_value: totalValue,
+        total_value: totalValue,
+        other_costs: 0,
+        discount: 0,
+        is_paid: false,
+        payment_form: newOrder.payment_form || null,
+        payment_conditions: newOrder.payment_conditions || null,
+        observations: newOrder.observations || null,
+        status: true,
+      }).select().single();
+
+      if (error) throw error;
+
+      // Inserir itens
+      const itemsToInsert = validItems.map((item, idx) => ({
+        purchase_order_id: order.id,
+        order_number: nextNumber,
+        description: item.description,
+        unit: item.unit,
+        quantity: item.quantity,
+        unit_cost: item.unit_cost,
+        unit_price: item.unit_cost,
+        total: item.quantity * item.unit_cost,
+        is_product: true,
+        discount: 0,
+        discount_percent: 0,
+        shortage: 0,
+      }));
+
+      await supabase.from('purchase_order_items').insert(itemsToInsert);
+
+      setNewOrderModal(false);
+      loadOrders();
+      loadStats();
+    } catch (err) {
+      console.error('Erro ao salvar pedido:', err);
+      alert('Erro ao salvar pedido: ' + (err as Error).message);
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Sub-Tab Navigation */}
@@ -174,6 +271,14 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
 
       {subTab === 'PEDIDOS' && (
       <>
+      {/* Header com botão Novo */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-black text-white uppercase tracking-widest">Pedidos de Compra</h2>
+        <button onClick={openNewOrder} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-2xl transition-all active:scale-95">
+          <Plus size={16} /> Novo Pedido
+        </button>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
@@ -613,6 +718,103 @@ const ComprasTab: React.FC<ComprasTabProps> = ({ onRefresh }) => {
         receipt={selectedReceipt}
         onSaved={handleReceiptSaved}
       />
+
+      {/* Modal Novo Pedido de Compra */}
+      <Modal isOpen={newOrderModal} onClose={() => setNewOrderModal(false)} title="Novo Pedido de Compra" size="lg">
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar p-1">
+          {/* Fornecedor */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Fornecedor *</label>
+              <input list="supplier-list" value={newOrder.supplier_name}
+                onChange={(e) => {
+                  setNewOrder({ ...newOrder, supplier_name: e.target.value });
+                  const match = suppliers.find(s => s.name === e.target.value);
+                  if (match?.phone) setNewOrder(prev => ({ ...prev, supplier_name: e.target.value, supplier_phone: match.phone || '' }));
+                }}
+                placeholder="Digite ou selecione..."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" />
+              <datalist id="supplier-list">
+                {suppliers.map(s => <option key={s.id} value={s.name} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Telefone</label>
+              <input value={newOrder.supplier_phone} onChange={(e) => setNewOrder({ ...newOrder, supplier_phone: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" />
+            </div>
+          </div>
+
+          {/* Datas */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Data do Pedido *</label>
+              <input type="date" value={newOrder.order_date} onChange={(e) => setNewOrder({ ...newOrder, order_date: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Previsão Entrega</label>
+              <input type="date" value={newOrder.delivery_date} onChange={(e) => setNewOrder({ ...newOrder, delivery_date: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Forma Pagamento</label>
+              <input value={newOrder.payment_form} onChange={(e) => setNewOrder({ ...newOrder, payment_form: e.target.value })}
+                placeholder="PIX, Boleto, etc."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" />
+            </div>
+          </div>
+
+          {/* Itens */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Itens do Pedido</label>
+              <button onClick={addOrderItem} className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                <Plus size={12} /> Adicionar Item
+              </button>
+            </div>
+            <div className="space-y-2">
+              {newOrderItems.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl p-2">
+                  <input value={item.description} onChange={(e) => updateOrderItem(idx, 'description', e.target.value)}
+                    placeholder="Descrição do item" className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none placeholder:text-slate-600" />
+                  <input value={item.unit} onChange={(e) => updateOrderItem(idx, 'unit', e.target.value)}
+                    className="w-14 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-center text-white focus:outline-none" />
+                  <input type="number" value={item.quantity} onChange={(e) => updateOrderItem(idx, 'quantity', Number(e.target.value))}
+                    className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-center text-white focus:outline-none" min={0} step={1} />
+                  <input type="number" value={item.unit_cost} onChange={(e) => updateOrderItem(idx, 'unit_cost', Number(e.target.value))}
+                    placeholder="R$ Custo" className="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-right text-white focus:outline-none" min={0} step={0.01} />
+                  <span className="text-xs text-slate-400 w-20 text-right">{formatCurrency(item.quantity * item.unit_cost)}</span>
+                  {newOrderItems.length > 1 && (
+                    <button onClick={() => removeOrderItem(idx)} className="text-red-500 hover:text-red-400 p-1"><Trash2 size={14} /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-2">
+              <span className="text-sm font-black text-white">
+                Total: {formatCurrency(newOrderItems.reduce((s, i) => s + i.quantity * i.unit_cost, 0))}
+              </span>
+            </div>
+          </div>
+
+          {/* Observações */}
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Observações</label>
+            <textarea value={newOrder.observations} onChange={(e) => setNewOrder({ ...newOrder, observations: e.target.value })}
+              rows={2} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500 outline-none resize-none" />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-slate-800">
+          <button onClick={() => setNewOrderModal(false)} className="px-5 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors">Cancelar</button>
+          <button onClick={saveNewOrder} disabled={savingOrder}
+            className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50">
+            {savingOrder ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {savingOrder ? 'Salvando...' : 'Salvar Pedido'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 };

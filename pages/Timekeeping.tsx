@@ -14,6 +14,7 @@ import {
     Sparkles, AlertCircle, Clock, Calendar
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import TimeInput from '../components/TimeInput';
 import {
     processTimecardImage,
     processTimecardBatch,
@@ -32,6 +33,7 @@ interface Employee {
     id: string;
     name: string;
     registration_number: string;
+    company_id?: string;
 }
 
 interface OcrCard {
@@ -46,6 +48,58 @@ interface OcrCard {
     expanded: boolean;
     editedEntries?: TimecardEntry[];
     selectedDays: Set<number>; // dias selecionados para salvar
+    overrideMonth?: number;   // mês manual (1-12)
+    overrideYear?: number;    // ano manual
+}
+
+const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+// ============================================
+// Helper: validação de mês/ano
+// ============================================
+
+/** Corrige ano absurdo da IA (ex: 2006 vira 2026 se mês bate) */
+function autoCorrectYear(detectedYear: number): number {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    // Se o ano detectado é > 20 anos atrás ou no futuro distante, provavelmente a IA errou o século/década
+    if (detectedYear < currentYear - 2 || detectedYear > currentYear + 1) {
+        // Tenta corrigir mantendo os últimos 2 dígitos e usando o século correto
+        const last2 = detectedYear % 100;
+        const corrected = Math.floor(currentYear / 100) * 100 + last2;
+        // Se o corrigido fica próximo (±2 anos), usa ele
+        if (Math.abs(corrected - currentYear) <= 2) {
+            return corrected;
+        }
+        // Senão, retorna ano atual
+        return currentYear;
+    }
+    return detectedYear;
+}
+
+/** Verifica se mês/ano é o atual ou anterior */
+function isCurrentOrPreviousMonth(month: number, year: number): boolean {
+    const now = new Date();
+    const curM = now.getMonth() + 1;
+    const curY = now.getFullYear();
+
+    // Mês atual
+    if (month === curM && year === curY) return true;
+
+    // Mês anterior
+    let prevM = curM - 1;
+    let prevY = curY;
+    if (prevM === 0) { prevM = 12; prevY--; }
+    if (month === prevM && year === prevY) return true;
+
+    return false;
+}
+
+interface DateConfirmation {
+    cardIdx: number;
+    month: number;
+    year: number;
+    action: 'saveCard' | 'saveAll';
 }
 
 // ============================================
@@ -60,14 +114,26 @@ const Timekeeping: React.FC = () => {
     const [savedCount, setSavedCount] = useState(0);
     const [totalToSave, setTotalToSave] = useState(0);
     const [dragOver, setDragOver] = useState(false);
+    const [hasGeminiKey, setHasGeminiKey] = useState(true);
+    const [dateConfirmation, setDateConfirmation] = useState<DateConfirmation | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Verificar chave IA (multi-provider)
+    useEffect(() => {
+        const checkKey = async () => {
+            const { getConfig } = await import('../lib/aiService');
+            const config = await getConfig();
+            setHasGeminiKey(!!config.apiKey);
+        };
+        checkKey();
+    }, []);
 
     // Carregar lista de funcionários
     useEffect(() => {
         const fetchEmployees = async () => {
             const { data, error } = await supabase
                 .from('employees')
-                .select('id, full_name, registration_number')
+                .select('id, full_name, registration_number, company_id')
                 .eq('active', true)
                 .order('full_name');
 
@@ -75,7 +141,8 @@ const Timekeeping: React.FC = () => {
                 setEmployees(data.map((e: any) => ({
                     id: e.id,
                     name: e.full_name || 'Sem Nome',
-                    registration_number: e.registration_number || ''
+                    registration_number: e.registration_number || '',
+                    company_id: e.company_id
                 })));
             }
         };
@@ -150,6 +217,21 @@ const Timekeeping: React.FC = () => {
 
             try {
                 const data = await processTimecardImage(updated[i].file);
+
+                // Auto-corrigir ano absurdo da IA (ex: 2006 → 2026)
+                if (data.year) {
+                    const correctedYear = autoCorrectYear(data.year);
+                    if (correctedYear !== data.year) {
+                        console.log(`[OCR] Ano corrigido automaticamente: ${data.year} → ${correctedYear}`);
+                        data.year = correctedYear;
+                        // Recalcular datas das entries
+                        data.entries = data.entries.map(e => ({
+                            ...e,
+                            date: `${correctedYear}-${String(data.month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                        }));
+                    }
+                }
+
                 updated[i].status = 'success';
                 updated[i].data = data;
                 updated[i].editedEntries = [...data.entries];
@@ -191,6 +273,20 @@ const Timekeeping: React.FC = () => {
 
         try {
             const data = await processTimecardImage(updated[idx].file);
+
+            // Auto-corrigir ano absurdo da IA
+            if (data.year) {
+                const correctedYear = autoCorrectYear(data.year);
+                if (correctedYear !== data.year) {
+                    console.log(`[OCR] Ano corrigido automaticamente: ${data.year} → ${correctedYear}`);
+                    data.year = correctedYear;
+                    data.entries = data.entries.map(e => ({
+                        ...e,
+                        date: `${correctedYear}-${String(data.month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                    }));
+                }
+            }
+
             updated[idx].status = 'success';
             updated[idx].data = data;
             updated[idx].editedEntries = [...data.entries];
@@ -264,6 +360,28 @@ const Timekeeping: React.FC = () => {
         });
     };
 
+    const changeMonthYear = (cardIdx: number, month: number, year: number) => {
+        setCards(prev => {
+            const copy = [...prev];
+            const card = copy[cardIdx];
+            const entries = card.editedEntries || card.data?.entries || [];
+
+            // Recalcular as datas de cada entry com o novo mês/ano
+            const updatedEntries = entries.map(e => ({
+                ...e,
+                date: `${year}-${String(month).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+            }));
+
+            copy[cardIdx] = {
+                ...card,
+                overrideMonth: month,
+                overrideYear: year,
+                editedEntries: updatedEntries,
+            };
+            return copy;
+        });
+    };
+
     const changeEmployee = (cardIdx: number, empId: string) => {
         setCards(prev => {
             const copy = [...prev];
@@ -279,16 +397,73 @@ const Timekeeping: React.FC = () => {
     };
 
     // ============================================
+    // Validação de mês/ano antes de salvar
+    // ============================================
+
+    /** Verifica se algum card tem mês/ano fora do esperado e pede confirmação */
+    const getCardMonthYear = (card: OcrCard) => {
+        const month = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+        const year = card.overrideYear || card.data?.year || new Date().getFullYear();
+        return { month, year };
+    };
+
+    const requestSaveAll = () => {
+        // Verificar se algum card tem mês/ano fora do atual/anterior
+        const cardsToSave = cards.filter(
+            c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0
+        );
+        const unusual = cardsToSave.find(c => {
+            const { month, year } = getCardMonthYear(c);
+            return !isCurrentOrPreviousMonth(month, year);
+        });
+
+        if (unusual) {
+            const { month, year } = getCardMonthYear(unusual);
+            setDateConfirmation({ cardIdx: -1, month, year, action: 'saveAll' });
+        } else {
+            doSaveAll();
+        }
+    };
+
+    const requestSaveCard = (idx: number) => {
+        const card = cards[idx];
+        if (!card) return;
+        const { month, year } = getCardMonthYear(card);
+
+        if (!isCurrentOrPreviousMonth(month, year)) {
+            setDateConfirmation({ cardIdx: idx, month, year, action: 'saveCard' });
+        } else {
+            doSaveCard(idx);
+        }
+    };
+
+    const handleDateConfirm = () => {
+        if (!dateConfirmation) return;
+        if (dateConfirmation.action === 'saveAll') {
+            doSaveAll();
+        } else {
+            doSaveCard(dateConfirmation.cardIdx);
+        }
+        setDateConfirmation(null);
+    };
+
+    // ============================================
     // Salvar no Supabase
     // ============================================
 
-    const saveAll = async () => {
+    const doSaveAll = async () => {
         setIsSaving(true);
         setSavedCount(0);
 
         const cardsToSave = cards.filter(
             c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0
         );
+        console.log('[SAVE] Cards to save:', cardsToSave.length, cardsToSave.map(c => ({
+            emp: c.matchedEmployeeName,
+            empId: c.matchedEmployeeId,
+            days: c.selectedDays.size,
+            status: c.status
+        })));
         setTotalToSave(cardsToSave.reduce((sum, c) => sum + c.selectedDays.size, 0));
 
         let count = 0;
@@ -296,23 +471,40 @@ const Timekeeping: React.FC = () => {
 
         for (let i = 0; i < updated.length; i++) {
             const card = updated[i];
-            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) continue;
+            if (card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) {
+                console.log(`[SAVE] Skipping card ${i}: status=${card.status}, empId=${card.matchedEmployeeId}, days=${card.selectedDays?.size}`);
+                continue;
+            }
+
+            // Pegar mês/ano correto: override > OCR > atual
+            const saveMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+            const saveYear = card.overrideYear || card.data?.year || new Date().getFullYear();
 
             const entries = (card.editedEntries || card.data?.entries || [])
-                .filter(e => card.selectedDays.has(e.day));
+                .filter(e => card.selectedDays.has(e.day))
+                .map(e => ({
+                    ...e,
+                    // SEMPRE recalcular a data com mês/ano correto
+                    date: `${saveYear}-${String(saveMonth).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+                }));
 
-            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId);
+            const emp = employees.find(e => e.id === card.matchedEmployeeId);
+            console.log(`[SAVE] Card ${i}: emp=${emp?.name}, company_id=${emp?.company_id}, month=${saveMonth}/${saveYear}, entries=${entries.length}`);
+            const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId, emp?.company_id);
+            console.log(`[SAVE] Records to upsert:`, records.length, records.length > 0 ? records[0] : 'EMPTY');
 
             let allOk = true;
             for (const record of records) {
-                const { error } = await supabase
+                console.log(`[SAVE] Upserting:`, JSON.stringify(record));
+                const { error, data } = await supabase
                     .from('time_entries')
                     .upsert(record, { onConflict: 'employee_id,date' as any });
 
                 if (error) {
-                    console.error('Erro ao salvar:', record.date, error);
+                    console.error('[SAVE] ERRO ao salvar:', record.date, JSON.stringify(error));
                     allOk = false;
                 } else {
+                    console.log(`[SAVE] OK: ${record.date}`, data);
                     count++;
                     setSavedCount(count);
                 }
@@ -328,6 +520,47 @@ const Timekeeping: React.FC = () => {
     };
 
     // ============================================
+    // Salvar card individual
+    // ============================================
+
+    const doSaveCard = async (idx: number) => {
+        const card = cards[idx];
+        if (!card || card.status !== 'success' || !card.matchedEmployeeId || card.selectedDays.size === 0) return;
+
+        const saveMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+        const saveYear = card.overrideYear || card.data?.year || new Date().getFullYear();
+
+        const entries = (card.editedEntries || card.data?.entries || [])
+            .filter(e => card.selectedDays.has(e.day))
+            .map(e => ({
+                ...e,
+                date: `${saveYear}-${String(saveMonth).padStart(2, '0')}-${String(e.day).padStart(2, '0')}`,
+            }));
+
+        const emp = employees.find(e => e.id === card.matchedEmployeeId);
+        const records = ocrEntriesToTimeEntries(entries, card.matchedEmployeeId, emp?.company_id);
+
+        let allOk = true;
+        for (const record of records) {
+            const { error } = await supabase
+                .from('time_entries')
+                .upsert(record, { onConflict: 'employee_id,date' as any });
+            if (error) {
+                console.error('[SAVE] ERRO:', record.date, JSON.stringify(error));
+                allOk = false;
+            }
+        }
+
+        if (allOk) {
+            setCards(prev => {
+                const copy = [...prev];
+                copy[idx] = { ...copy[idx], status: 'saved' };
+                return copy;
+            });
+        }
+    };
+
+    // ============================================
     // Contadores
     // ============================================
 
@@ -336,8 +569,6 @@ const Timekeeping: React.FC = () => {
     const errorCount = cards.filter(c => c.status === 'error').length;
     const savedCards = cards.filter(c => c.status === 'saved').length;
     const readyToSave = cards.filter(c => c.status === 'success' && c.matchedEmployeeId && c.selectedDays.size > 0).length;
-
-    const hasGeminiKey = !!import.meta.env.VITE_GEMINI_API_KEY;
 
     // ============================================
     // Render
@@ -406,7 +637,7 @@ const Timekeeping: React.FC = () => {
 
                         {readyToSave > 0 && (
                             <button
-                                onClick={saveAll}
+                                onClick={requestSaveAll}
                                 disabled={isSaving}
                                 className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors"
                             >
@@ -429,7 +660,7 @@ const Timekeeping: React.FC = () => {
                         <div>
                             <p className="text-sm font-semibold text-amber-800">Chave Gemini AI necessária</p>
                             <p className="text-sm text-amber-700 mt-1">
-                                Adicione <code className="bg-amber-100 px-1 rounded">VITE_GEMINI_API_KEY=sua_chave</code> no arquivo <code className="bg-amber-100 px-1 rounded">.env.local</code> para usar a leitura por IA.
+                                Configure sua chave Gemini em <strong>Configurações → Integrações & API</strong> para usar a leitura por IA.
                                 Obtenha sua chave em <span className="underline">aistudio.google.com</span>.
                             </p>
                         </div>
@@ -502,11 +733,13 @@ const Timekeeping: React.FC = () => {
                                     });
                                 }}
                                 onChangeEmployee={(empId) => changeEmployee(idx, empId)}
+                                onChangeMonthYear={(month, year) => changeMonthYear(idx, month, year)}
                                 onUpdateEntry={(entryIdx, field, value) =>
                                     updateEntryField(idx, entryIdx, field, value)
                                 }
                                 onToggleDay={(day) => toggleDay(idx, day)}
                                 onToggleAllDays={() => toggleAllDays(idx)}
+                                onSaveCard={() => requestSaveCard(idx)}
                             />
                         ))}
                     </div>
@@ -520,6 +753,50 @@ const Timekeeping: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Modal de confirmação de mês/ano incomum */}
+            {dateConfirmation && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                <AlertTriangle size={22} className="text-amber-600" />
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-800">
+                                Data fora do período esperado
+                            </h3>
+                        </div>
+
+                        <p className="text-sm text-slate-600 mb-2">
+                            O cartão está configurado para salvar em:
+                        </p>
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-center">
+                            <span className="text-xl font-bold text-amber-800">
+                                {MONTH_NAMES[dateConfirmation.month - 1]}/{dateConfirmation.year}
+                            </span>
+                        </div>
+                        <p className="text-sm text-slate-500 mb-6">
+                            Esse período é diferente do mês atual ou anterior. A IA pode ter detectado o mês/ano incorretamente.
+                            Deseja continuar mesmo assim?
+                        </p>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setDateConfirmation(null)}
+                                className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 font-semibold rounded-xl hover:bg-slate-50 transition-colors text-sm"
+                            >
+                                Cancelar e Corrigir
+                            </button>
+                            <button
+                                onClick={handleDateConfirm}
+                                className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl transition-colors text-sm"
+                            >
+                                Salvar mesmo assim
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -536,15 +813,18 @@ interface OcrCardProps {
     onRetry: () => void;
     onToggleExpand: () => void;
     onChangeEmployee: (empId: string) => void;
+    onChangeMonthYear: (month: number, year: number) => void;
     onUpdateEntry: (entryIdx: number, field: keyof TimecardEntry, value: string) => void;
     onToggleDay: (day: number) => void;
     onToggleAllDays: () => void;
+    onSaveCard: () => void | Promise<void>;
 }
 
 const OcrCardComponent: React.FC<OcrCardProps> = ({
     card, index, employees, onRemove, onRetry, onToggleExpand,
-    onChangeEmployee, onUpdateEntry, onToggleDay, onToggleAllDays
+    onChangeEmployee, onChangeMonthYear, onUpdateEntry, onToggleDay, onToggleAllDays, onSaveCard
 }) => {
+    const [isSavingThis, setIsSavingThis] = useState(false);
     const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
     const [empSearch, setEmpSearch] = useState('');
 
@@ -573,6 +853,11 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 
     const confidenceColor = (card.data?.confidence || 0) >= 80 ? 'text-emerald-600' :
         (card.data?.confidence || 0) >= 50 ? 'text-amber-600' : 'text-red-500';
+
+    // Verificar se mês/ano é incomum (fora do mês atual/anterior)
+    const selMonth = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+    const selYear = card.overrideYear || card.data?.year || new Date().getFullYear();
+    const isDateUnusual = card.status === 'success' && !isCurrentOrPreviousMonth(selMonth, selYear);
 
     return (
         <div className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
@@ -646,6 +931,40 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
                     )}
                 </div>
 
+                {/* Seletor de Mês/Ano */}
+                {card.status === 'success' && (
+                    <div className={`flex items-center gap-1.5 flex-shrink-0 ${isDateUnusual ? 'ring-2 ring-amber-400 rounded-lg px-1.5 py-0.5 bg-amber-50' : ''}`}>
+                        {isDateUnusual && <AlertTriangle size={14} className="text-amber-500" />}
+                        <Calendar size={14} className={isDateUnusual ? 'text-amber-500' : 'text-slate-400'} />
+                        <select
+                            value={card.overrideMonth || card.data?.month || new Date().getMonth() + 1}
+                            onChange={e => {
+                                const m = Number(e.target.value);
+                                const y = card.overrideYear || card.data?.year || new Date().getFullYear();
+                                onChangeMonthYear(m, y);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:ring-2 focus:ring-violet-400 focus:border-transparent outline-none"
+                        >
+                            {MONTH_NAMES.map((name, i) => (
+                                <option key={i + 1} value={i + 1}>{name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={card.overrideYear || card.data?.year || new Date().getFullYear()}
+                            onChange={e => {
+                                const y = Number(e.target.value);
+                                const m = card.overrideMonth || card.data?.month || new Date().getMonth() + 1;
+                                onChangeMonthYear(m, y);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:ring-2 focus:ring-violet-400 focus:border-transparent outline-none"
+                        >
+                            {[2024, 2025, 2026, 2027].map(y => (
+                                <option key={y} value={y}>{y}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
                 {/* Seletor de Funcionário */}
                 {card.status === 'success' && (
                     <div className="relative flex-shrink-0">
@@ -706,6 +1025,21 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 
                 {/* Botões */}
                 <div className="flex items-center gap-1 flex-shrink-0">
+                    {card.status === 'success' && card.matchedEmployeeId && card.selectedDays.size > 0 && (
+                        <button
+                            onClick={async () => {
+                                setIsSavingThis(true);
+                                await onSaveCard();
+                                setIsSavingThis(false);
+                            }}
+                            disabled={isSavingThis}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50 transition-colors"
+                            title="Salvar este cartão"
+                        >
+                            {isSavingThis ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            Salvar
+                        </button>
+                    )}
                     {card.status === 'error' && (
                         <button onClick={onRetry} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Tentar novamente">
                             <RefreshCw size={16} />
@@ -794,17 +1128,9 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
                                             {(['entrada1', 'saida1', 'entrada2', 'saida2', 'entrada3', 'saida3'] as const).map(field => (
                                                 <td key={field} className="px-1 py-1.5 text-center">
                                                     {card.status !== 'saved' ? (
-                                                        <input
-                                                            type="text"
-                                                            value={entry[field] || ''}
-                                                            onChange={e => onUpdateEntry(eIdx, field, e.target.value)}
-                                                            className={`w-16 px-1.5 py-1 text-center text-xs font-mono rounded border transition-colors ${
-                                                                entry[field]
-                                                                    ? 'border-slate-200 bg-white text-slate-700 focus:border-violet-400 focus:ring-1 focus:ring-violet-200'
-                                                                    : 'border-transparent bg-transparent text-slate-300'
-                                                            }`}
-                                                            placeholder="--:--"
-                                                            maxLength={5}
+                                                        <TimeInput
+                                                            value={entry[field]}
+                                                            onChange={v => onUpdateEntry(eIdx, field, v)}
                                                         />
                                                     ) : (
                                                         <span className="text-xs font-mono text-slate-600">
@@ -846,3 +1172,4 @@ const OcrCardComponent: React.FC<OcrCardProps> = ({
 const MONTHS_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
 export default Timekeeping;
+// Date validation v1

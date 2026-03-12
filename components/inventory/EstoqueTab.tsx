@@ -3,9 +3,11 @@ import { InventoryItem, InventoryCategory, InventoryBrand } from '../../types';
 import {
   Search, Plus, Filter, Download, Image as ImageIcon,
   Camera, Save, Package, Wrench, Trash2, ChevronLeft, ChevronRight,
-  X, DollarSign, MapPin, BarChart3, Box,
+  X, DollarSign, MapPin, BarChart3, Box, Sparkles, Upload, Loader2, RefreshCw,
 } from 'lucide-react';
 import { inventoryService } from '../../services/inventoryService';
+import { supabase } from '../../lib/supabase';
+import { getSettingValue } from '../../lib/getGeminiKey';
 import Modal from '../Modal';
 import ItemMovementHistory from './ItemMovementHistory';
 
@@ -35,6 +37,181 @@ const EstoqueTab: React.FC<EstoqueTabProps> = ({ categories, brands, onRefresh }
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Image states
+  const [searchingImage, setSearchingImage] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [manualUrl, setManualUrl] = useState('');
+  const photo1Ref = React.useRef<HTMLInputElement>(null);
+  const photo2Ref = React.useRef<HTMLInputElement>(null);
+
+  // Validar se uma URL de imagem realmente carrega
+  const validateImageUrl = (url: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      const timeout = setTimeout(() => resolve(false), 8000);
+      img.onload = () => { clearTimeout(timeout); resolve(true); };
+      img.onerror = () => { clearTimeout(timeout); resolve(false); };
+      img.src = url;
+    });
+  };
+
+  // Abrir Google Imagens para busca manual
+  const openGoogleImages = () => {
+    const desc = formData.description || editingItem?.description || '';
+    const brand = formData.brand_name || editingItem?.brand_name || '';
+    const query = encodeURIComponent(`${desc} ${brand} produto`.trim());
+    window.open(`https://www.google.com/search?tbm=isch&q=${query}`, '_blank');
+    setShowUrlInput(true);
+  };
+
+  // Upload manual de foto 1 (arquivo local)
+  const handlePhoto1Upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const fileName = `products/${Date.now()}_photo1_${Math.random().toString(36).slice(2)}.${ext}`;
+
+      const { error } = await supabase.storage.from('integration-docs').upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(fileName);
+      setFormData(prev => ({ ...prev, photo_1_url: urlData.publicUrl }));
+      setImageError(false);
+      setShowUrlInput(false);
+    } catch (err) {
+      console.error('Erro no upload:', err);
+      alert('Erro ao fazer upload: ' + (err as Error).message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  // Colar URL manual
+  const applyManualUrl = async () => {
+    if (!manualUrl.trim()) return;
+    setSearchingImage(true);
+    const isValid = await validateImageUrl(manualUrl.trim());
+    if (isValid) {
+      setFormData(prev => ({ ...prev, photo_1_url: manualUrl.trim() }));
+      setImageError(false);
+      setShowUrlInput(false);
+      setManualUrl('');
+    } else {
+      alert('URL inválida ou imagem não carregou. Tente outra URL.');
+    }
+    setSearchingImage(false);
+  };
+
+  // Buscar imagem via Gemini AI — com validação
+  const searchProductImage = async () => {
+    const desc = formData.description || editingItem?.description;
+    const brand = formData.brand_name || editingItem?.brand_name;
+    const sku = formData.sku || editingItem?.sku;
+    if (!desc) return alert('Preencha a descrição do produto primeiro');
+
+    setSearchingImage(true);
+    setImageError(false);
+    try {
+      const apiKey = await getSettingValue('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        setSearchingImage(false);
+        return alert('Configure a chave Google AI em Configurações');
+      }
+
+      // Tentar até 2 vezes com prompts variados
+      const prompts = [
+        `Retorne APENAS uma URL direta válida de imagem (JPG/PNG) de um produto real à venda online.
+Produto: ${desc}${brand ? ` - Marca: ${brand}` : ''}${sku ? ` - Ref: ${sku}` : ''}
+Busque em sites reais como mercadolivre.com.br, leroymerlin.com.br, amazon.com.br.
+Retorne SOMENTE a URL completa, nada mais.`,
+        `Preciso da URL de uma imagem real de: ${desc} ${brand || ''}
+Procure em catálogos online brasileiros. Retorne APENAS a URL da imagem (terminando em .jpg, .png ou .webp).
+Se não encontrar, diga "NOT_FOUND".`,
+      ];
+
+      for (let attempt = 0; attempt < prompts.length; attempt++) {
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompts[attempt] }] }],
+              generationConfig: { temperature: 0.1 },
+            }),
+          }
+        );
+
+        if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+
+        const data = await resp.json();
+        const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+
+        if (text.includes('NOT_FOUND')) break;
+
+        const urlMatch = text.match(/https?:\/\/[^\s"'<>]+\.(jpg|jpeg|png|webp)(\?[^\s"'<>]*)?/i);
+        if (urlMatch) {
+          const candidateUrl = urlMatch[0];
+          console.log(`[IMG] Tentativa ${attempt + 1}: ${candidateUrl}`);
+
+          // Validar se a URL realmente carrega
+          const isValid = await validateImageUrl(candidateUrl);
+          if (isValid) {
+            setFormData(prev => ({ ...prev, photo_1_url: candidateUrl }));
+            setSearchingImage(false);
+            return; // Sucesso!
+          }
+          console.log(`[IMG] URL inválida na tentativa ${attempt + 1}`);
+        }
+      }
+
+      // Todas as tentativas falharam — mostrar opções
+      setImageError(true);
+      setShowUrlInput(true);
+    } catch (err) {
+      console.error('Erro na busca de imagem:', err);
+      setImageError(true);
+    } finally {
+      setSearchingImage(false);
+    }
+  };
+
+  // Upload manual de foto 2
+  const handlePhoto2Upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const fileName = `products/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+      const { error } = await supabase.storage.from('integration-docs').upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from('integration-docs').getPublicUrl(fileName);
+      setFormData(prev => ({ ...prev, photo_2_url: urlData.publicUrl }));
+    } catch (err) {
+      console.error('Erro no upload:', err);
+      alert('Erro ao fazer upload: ' + (err as Error).message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   // Form state
   const [formData, setFormData] = useState<Partial<InventoryItem>>({
@@ -115,12 +292,18 @@ const EstoqueTab: React.FC<EstoqueTabProps> = ({ categories, brands, onRefresh }
       cost_price: 0, sell_price: 0, margin_percent: 0,
       notes: '', active: true,
     });
+    setImageError(false);
+    setShowUrlInput(false);
+    setManualUrl('');
     setIsModalOpen(true);
   };
 
   const openEditModal = (item: InventoryItem) => {
     setEditingItem(item);
     setFormData({ ...item });
+    setImageError(false);
+    setShowUrlInput(false);
+    setManualUrl('');
     setIsModalOpen(true);
   };
 
@@ -436,17 +619,142 @@ const EstoqueTab: React.FC<EstoqueTabProps> = ({ categories, brands, onRefresh }
         <div className="flex gap-6">
           {/* Left Column - Photos + Info */}
           <div className="w-1/3 space-y-4">
-            {/* Photo placeholders */}
+            {/* Photos - Foto 1 + Foto 2 */}
             <div className="grid grid-cols-2 gap-2">
-              <div className="aspect-square bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-blue-500 hover:text-blue-500 transition-all cursor-pointer">
-                <Camera size={28} className="mb-1 opacity-50" />
-                <span className="text-[9px] font-bold uppercase">Foto 1</span>
+              {/* Foto 1 — Busca IA ou Upload */}
+              <div className="relative group">
+                <input ref={photo1Ref} type="file" accept="image/*" onChange={handlePhoto1Upload} className="hidden" />
+                {formData.photo_1_url && !imageError ? (
+                  <div className="aspect-square bg-slate-950 border border-slate-700 rounded-xl overflow-hidden relative">
+                    <img
+                      src={formData.photo_1_url}
+                      alt="Foto 1"
+                      className="w-full h-full object-cover"
+                      onError={() => setImageError(true)}
+                    />
+                    <button onClick={searchProductImage} disabled={searchingImage}
+                      className="absolute bottom-1 right-1 p-1.5 bg-slate-900/90 hover:bg-blue-600 text-white rounded-lg transition-all text-[9px] flex items-center gap-1">
+                      {searchingImage ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    </button>
+                    <button onClick={() => { setFormData(prev => ({ ...prev, photo_1_url: '' })); setImageError(false); }}
+                      className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-500 text-white rounded-lg">
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : imageError || (formData.photo_1_url && imageError) ? (
+                  /* Estado de erro — imagem não carregou */
+                  <div className="aspect-square bg-slate-950 border-2 border-dashed border-red-900/50 rounded-xl flex flex-col items-center justify-center p-2 relative">
+                    <ImageIcon size={20} className="text-red-500/60 mb-1" />
+                    <span className="text-[8px] text-red-400 font-bold text-center">Imagem não encontrada</span>
+                    <div className="flex gap-1 mt-2">
+                      <button onClick={searchProductImage} disabled={searchingImage} title="Tentar novamente via IA"
+                        className="p-1.5 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-[8px]">
+                        {searchingImage ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                      </button>
+                      <button onClick={openGoogleImages} title="Buscar no Google Imagens"
+                        className="p-1.5 bg-blue-600/80 hover:bg-blue-500 text-white rounded-lg text-[8px]">
+                        <Search size={10} />
+                      </button>
+                      <button onClick={() => photo1Ref.current?.click()} title="Upload do computador"
+                        className="p-1.5 bg-emerald-600/80 hover:bg-emerald-500 text-white rounded-lg text-[8px]">
+                        <Upload size={10} />
+                      </button>
+                    </div>
+                    <button onClick={() => { setFormData(prev => ({ ...prev, photo_1_url: '' })); setImageError(false); setShowUrlInput(false); }}
+                      className="absolute top-1 right-1 p-1 bg-slate-700/80 hover:bg-red-500 text-white rounded-lg">
+                      <X size={8} />
+                    </button>
+                  </div>
+                ) : (
+                  /* Estado vazio — sem imagem */
+                  <div className="aspect-square bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500">
+                    {searchingImage ? (
+                      <>
+                        <Loader2 size={24} className="animate-spin mb-1 text-purple-400" />
+                        <span className="text-[8px] font-bold uppercase text-purple-400">Buscando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex gap-1 mb-2">
+                          <button onClick={searchProductImage} title="Buscar via IA"
+                            className="p-2 bg-slate-800 hover:bg-purple-600 text-slate-400 hover:text-white rounded-lg transition-all">
+                            <Sparkles size={16} />
+                          </button>
+                          <button onClick={() => photo1Ref.current?.click()} title="Upload do computador"
+                            className="p-2 bg-slate-800 hover:bg-emerald-600 text-slate-400 hover:text-white rounded-lg transition-all">
+                            <Upload size={16} />
+                          </button>
+                        </div>
+                        <span className="text-[7px] font-bold uppercase">Foto 1</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="aspect-square bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-blue-500 hover:text-blue-500 transition-all cursor-pointer">
-                <ImageIcon size={28} className="mb-1 opacity-50" />
-                <span className="text-[9px] font-bold uppercase">Foto 2</span>
+
+              {/* Foto 2 — Upload manual */}
+              <div className="relative">
+                <input ref={photo2Ref} type="file" accept="image/*" onChange={handlePhoto2Upload} className="hidden" />
+                {formData.photo_2_url ? (
+                  <div className="aspect-square bg-slate-950 border border-slate-700 rounded-xl overflow-hidden relative">
+                    <img src={formData.photo_2_url} alt="Foto 2" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    <button onClick={() => photo2Ref.current?.click()} disabled={uploadingImage}
+                      className="absolute bottom-1 right-1 p-1.5 bg-slate-900/90 hover:bg-blue-600 text-white rounded-lg transition-all">
+                      {uploadingImage ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    </button>
+                    <button onClick={() => setFormData(prev => ({ ...prev, photo_2_url: '' }))}
+                      className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-500 text-white rounded-lg">
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => photo2Ref.current?.click()} disabled={uploadingImage}
+                    className="aspect-square w-full bg-slate-950 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 hover:border-emerald-500 hover:text-emerald-400 transition-all cursor-pointer">
+                    {uploadingImage ? (
+                      <Loader2 size={24} className="animate-spin mb-1 text-emerald-400" />
+                    ) : (
+                      <Upload size={24} className="mb-1 opacity-70" />
+                    )}
+                    <span className="text-[8px] font-bold uppercase">{uploadingImage ? 'Enviando...' : 'Upload Foto'}</span>
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* Campo para colar URL de imagem */}
+            {showUrlInput && (
+              <div className="bg-slate-950 border border-blue-900/50 rounded-xl p-3 space-y-2">
+                <p className="text-[9px] text-blue-400 font-bold">
+                  📋 Cole a URL da imagem abaixo:
+                </p>
+                <p className="text-[8px] text-slate-500">
+                  Dica: No Google Imagens, clique com botão direito na imagem → "Copiar endereço da imagem"
+                </p>
+                <div className="flex gap-1">
+                  <input
+                    type="url"
+                    value={manualUrl}
+                    onChange={(e) => setManualUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                    onKeyDown={(e) => e.key === 'Enter' && applyManualUrl()}
+                  />
+                  <button
+                    onClick={applyManualUrl}
+                    disabled={searchingImage || !manualUrl.trim()}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold disabled:opacity-30"
+                  >
+                    {searchingImage ? <Loader2 size={12} className="animate-spin" /> : 'OK'}
+                  </button>
+                </div>
+                <button
+                  onClick={openGoogleImages}
+                  className="w-full text-[9px] text-blue-400 hover:text-blue-300 underline font-bold"
+                >
+                  🔍 Abrir Google Imagens para buscar
+                </button>
+              </div>
+            )}
 
             {/* Quick stats when editing */}
             {editingItem && (

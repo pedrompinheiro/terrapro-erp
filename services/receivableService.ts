@@ -19,6 +19,8 @@ export interface ContaReceber {
     data_emissao: string;
     data_vencimento: string;
     data_recebimento?: string;
+    competencia?: string;
+    data_liquidacao?: string;
     plano_contas_id?: string;
     centro_custo_id?: string;
     categoria?: string;
@@ -41,6 +43,15 @@ export interface ContaReceber {
     contrato_id?: string;
     nota_fiscal_id?: string;
     conciliado?: boolean;
+    origem_tipo?: string;
+    origem_id?: string;
+    tipo_documento?: string;
+    numero_nf?: string;
+    created_by?: string;
+    updated_by?: string;
+    canceled_by?: string;
+    motivo_cancelamento?: string;
+    filial_id?: string;
 }
 
 class ReceivableService {
@@ -53,6 +64,7 @@ class ReceivableService {
         vencidas?: boolean;
         inadimplentes?: boolean;
         recorrentes?: boolean;
+        filial_id?: string;
     }) {
         let query = supabase
             .from('contas_receber')
@@ -63,6 +75,10 @@ class ReceivableService {
         centro_custo:centros_custo(codigo, nome)
       `)
             .order('data_vencimento', { ascending: false });
+
+        if (filtros?.filial_id) {
+            query = query.eq('filial_id', filtros.filial_id);
+        }
 
         if (filtros?.cliente_id) {
             query = query.eq('cliente_id', filtros.cliente_id);
@@ -103,9 +119,34 @@ class ReceivableService {
         if (!conta.taxa_juros_dia) conta.taxa_juros_dia = 0.0333; // 1% a.m.
         if (!conta.percentual_multa) conta.percentual_multa = 2.0;
 
+        // Preencher competencia automaticamente (fallback = mês do vencimento)
+        if (!conta.competencia && conta.data_vencimento) {
+            conta.competencia = conta.data_vencimento.substring(0, 7) + '-01';
+        }
+
+        // Preencher origem_tipo se não fornecido
+        if (!conta.origem_tipo) {
+            conta.origem_tipo = conta.recorrente ? 'RECORRENTE' : 'MANUAL';
+        }
+
         const { data, error } = await supabase
             .from('contas_receber')
             .insert(conta)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    }
+
+    /**
+     * Atualizar conta a receber existente
+     */
+    async atualizar(id: string, dados: Partial<ContaReceber>) {
+        const { data, error } = await supabase
+            .from('contas_receber')
+            .update(dados)
+            .eq('id', id)
             .select()
             .single();
 
@@ -213,13 +254,14 @@ class ReceivableService {
 
         if (!titulo) throw new Error('Título não encontrado');
 
-        // Atualizar título
+        // Atualizar título (com data_liquidacao para regime de caixa)
         const { data, error } = await supabase
             .from('contas_receber')
             .update({
                 valor_recebido: dados.valor_recebido,
                 valor_desconto: dados.valor_desconto || 0,
                 data_recebimento: dados.data_recebimento,
+                data_liquidacao: dados.data_recebimento,
                 forma_recebimento: dados.forma_recebimento,
                 banco_id: dados.banco_id,
                 observacao: dados.observacao,
@@ -240,7 +282,9 @@ class ReceivableService {
                 valor: dados.valor_recebido,
                 tipo_movimento: 'CREDITO',
                 origem: 'RECEBIMENTO',
+                tipo_origem: 'BAIXA_RECEBER',
                 lancamento_financeiro_id: id,
+                lancamento_id: id,
                 lancamento_tipo: 'RECEBER',
             });
 
@@ -264,6 +308,25 @@ class ReceivableService {
         // Se cliente estava inadimplente, verificar se pode remover flag
         await this.verificarInadimplencia(titulo.cliente_id);
 
+        return data;
+    }
+
+    /**
+     * Cancelar conta a receber (soft delete com motivo)
+     */
+    async cancelar(id: string, motivo: string) {
+        const { data, error } = await supabase
+            .from('contas_receber')
+            .update({
+                status: 'CANCELADO',
+                motivo_cancelamento: motivo,
+                observacao: `CANCELADO: ${motivo}`,
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
         return data;
     }
 
@@ -507,8 +570,15 @@ Equipe Financeira
     }
 
     private async enviarWhatsApp(telefone: string, mensagem: string, anexo?: string) {
-        // TODO: Integrar com Evolution API
-        console.log('WhatsApp enviado para:', telefone);
+        const { evolutionService } = await import('./evolutionService');
+
+        // Envia texto da cobranca
+        await evolutionService.sendText(telefone, mensagem);
+
+        // Se tiver anexo (boleto PDF como URL ou base64), envia como documento
+        if (anexo) {
+            await evolutionService.sendMedia(telefone, anexo, 'Boleto em anexo', 'document', 'boleto.pdf');
+        }
     }
 }
 
