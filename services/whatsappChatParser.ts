@@ -5,6 +5,17 @@
  */
 
 // ============================================================
+// NORMALIZAÇÃO DE NOMES (contatos do WhatsApp → nome real)
+// ============================================================
+const SENDER_NAME_MAP: Record<string, string> = {
+  'Fernando Spier Tche Barbaridade': 'Fernando Spier',
+};
+
+function normalizeSender(sender: string): string {
+  return SENDER_NAME_MAP[sender] || sender;
+}
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -125,7 +136,7 @@ export function parseWhatsAppChat(chatText: string): WhatsAppMessage[] {
         date,
         dateStr,
         timeStr,
-        sender,
+        sender: normalizeSender(sender),
         text: text.replace(attachRegex, '').replace(/^[\s‎]+|[\s‎]+$/g, ''),
         photoFile,
         videoFile,
