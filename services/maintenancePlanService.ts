@@ -204,6 +204,22 @@ export const maintenancePlanService = {
     return data || [];
   },
 
+  // ==================== BATCH ITEMS (for report PDF) ====================
+
+  async getAllPlanItems(): Promise<Record<string, MaintenancePlanItem[]>> {
+    const { data, error } = await supabase
+      .from('maintenance_plan_items')
+      .select('*')
+      .order('sort_order');
+    if (error) throw error;
+    const map: Record<string, MaintenancePlanItem[]> = {};
+    for (const item of (data || [])) {
+      if (!map[item.template_id]) map[item.template_id] = [];
+      map[item.template_id].push(item);
+    }
+    return map;
+  },
+
   // ==================== REPORT (cross-reference) ====================
 
   async getMaintenanceReport(dateFrom: string, dateTo: string, assetId?: string): Promise<MaintenanceReportData[]> {

@@ -346,7 +346,7 @@ const WhatsAppAutomation: React.FC = () => {
             <div className="flex justify-between items-end">
                 <div>
                     <h2 className="text-3xl font-black text-white tracking-tight">Automação WhatsApp & AI</h2>
-                    <p className="text-slate-500 mt-1">Status da API Local: <span className="font-mono text-emerald-500">http://localhost:8080</span></p>
+                    <p className="text-slate-500 mt-1">Evolution API: <span className="font-mono text-emerald-500">{import.meta.env.VITE_EVOLUTION_API_URL || 'http://localhost:8080'}</span></p>
                 </div>
                 <div className="flex items-center gap-4">
                     <button

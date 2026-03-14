@@ -244,9 +244,11 @@ export interface ReportPDFOptions {
   showValues?: boolean;        // incluir valores (R$) no relatório
   showWhatsApp?: boolean;      // incluir mensagens do WhatsApp
   showPhotos?: boolean;        // incluir fotos das OS
+  showChecklist?: boolean;     // incluir checklist do plano antes das OS
   whatsappMessages?: import('./whatsappChatParser').WhatsAppEquipmentGroup[];
   photoCache?: Record<string, string>; // url → base64 (OS photos)
   whatsappPhotos?: Record<string, string>; // filename → base64 (WhatsApp photos from ZIP)
+  planItemsMap?: Record<string, MaintenancePlanItem[]>; // template_id → items
 }
 
 export function generateMaintenanceReportPDF(
@@ -291,6 +293,7 @@ export function generateMaintenanceReportPDF(
   const showValues = options.showValues !== false; // default true
   const showWhatsApp = options.showWhatsApp === true;
   const showPhotos = options.showPhotos === true;
+  const showChecklist = options.showChecklist !== false; // default true
 
   // Summary
   const totalOS = reportData.reduce((sum, r) => sum + r.serviceOrders.length + r.maintenanceOrders.length, 0);
@@ -390,6 +393,15 @@ export function generateMaintenanceReportPDF(
     curY += 34;
 
     doc.setTextColor(...BLACK);
+
+    // ---- CHECKLIST DO PLANO (formato planilha Excel) ----
+    if (showChecklist && options.planItemsMap) {
+      const templateId = report.template.id;
+      const planItems = templateId ? options.planItemsMap[templateId] : undefined;
+      if (planItems && planItems.length > 0) {
+        curY = drawChecklistSection(doc, report.template, planItems, margin, curY, dateFromFmt);
+      }
+    }
 
     // Service Orders from Almoxarifado
     if (report.serviceOrders.length > 0) {
@@ -785,6 +797,179 @@ export function generateMaintenanceReportPDF(
 // ============================================================
 // HELPERS
 // ============================================================
+
+// ============================================================
+// CHECKLIST SECTION INSIDE REPORT (formato planilha Excel)
+// ============================================================
+
+function drawChecklistSection(
+  doc: jsPDF,
+  template: MaintenancePlanTemplate,
+  items: MaintenancePlanItem[],
+  margin: number,
+  startY: number,
+  dateStr: string,
+): number {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let curY = startY;
+
+  // --- Mini header: PLANO DE MANUTENÇÃO ---
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...TERRA_GREEN);
+  doc.text('PLANO DE MANUTENÇÃO PREVENTIVA', pageWidth / 2, curY, { align: 'center' });
+  curY += 16;
+
+  // Equipment info box
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(margin, curY, pageWidth - margin * 2, 50, 3, 3, 'F');
+  doc.setDrawColor(...TERRA_GREEN);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(margin, curY, pageWidth - margin * 2, 50, 3, 3, 'S');
+
+  const col1 = margin + 8;
+  const col2 = pageWidth / 2 + 10;
+  const infoY = curY + 14;
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BLACK);
+  doc.text('EQUIPAMENTO:', col1, infoY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(template.asset_name || '', col1 + 72, infoY);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('SÉRIE:', col2, infoY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(template.serial_number || '-', col2 + 35, infoY);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('MARCA:', col1, infoY + 13);
+  doc.setFont('helvetica', 'normal');
+  doc.text(template.brand || '-', col1 + 40, infoY + 13);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('FROTA:', col2, infoY + 13);
+  doc.setFont('helvetica', 'normal');
+  doc.text(template.fleet_number || '-', col2 + 35, infoY + 13);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('MODELO:', col1, infoY + 26);
+  doc.setFont('helvetica', 'normal');
+  doc.text(template.model || '-', col1 + 45, infoY + 26);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('DATA:', col2, infoY + 26);
+  doc.setFont('helvetica', 'normal');
+  doc.text(dateStr, col2 + 30, infoY + 26);
+
+  curY += 58;
+
+  // --- Group items by interval + category ---
+  const grouped = groupItemsByInterval(items);
+  const tableBody: any[][] = [];
+
+  for (const intervalType of INTERVAL_ORDER) {
+    const categories = grouped[intervalType];
+    if (!categories) continue;
+
+    const intervalLabel = INTERVAL_LABELS[intervalType] || intervalType;
+    let firstInInterval = true;
+
+    for (const [category, catItems] of Object.entries(categories)) {
+      // Category header row
+      tableBody.push([
+        { content: firstInInterval ? intervalLabel : '', rowSpan: 1, styles: { fontStyle: 'bold', fontSize: 7, fillColor: [230, 240, 230] } },
+        { content: category, colSpan: 1, styles: { fontStyle: 'bold', fontSize: 7, fillColor: [220, 230, 220] } },
+        { content: '', styles: { fillColor: [220, 230, 220] } },
+        { content: '', styles: { fillColor: [220, 230, 220] } },
+        { content: '', styles: { fillColor: [220, 230, 220] } },
+        { content: '', styles: { fillColor: [220, 230, 220] } },
+      ]);
+      firstInInterval = false;
+
+      for (const item of catItems) {
+        tableBody.push([
+          '',
+          item.service_name,
+          item.action_check ? 'X' : '',
+          item.action_clean ? 'X' : '',
+          item.action_replace ? 'X' : '',
+          item.action_adjust ? 'X' : '',
+        ]);
+      }
+    }
+  }
+
+  if (tableBody.length === 0) return curY;
+
+  // --- Draw checklist table ---
+  autoTable(doc, {
+    startY: curY,
+    margin: { left: margin, right: margin },
+    head: [[
+      { content: 'INTERVALO', styles: { halign: 'center', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6.5, cellPadding: 3 } },
+      { content: 'OPERAÇÃO DE SERVIÇO', styles: { halign: 'left', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6.5, cellPadding: 3 } },
+      { content: 'VERIFICAR', styles: { halign: 'center', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6, cellPadding: 3 } },
+      { content: 'LIMPAR', styles: { halign: 'center', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6, cellPadding: 3 } },
+      { content: 'TROCAR', styles: { halign: 'center', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6, cellPadding: 3 } },
+      { content: 'AJUSTAR', styles: { halign: 'center', fillColor: [...TERRA_GREEN], textColor: [...WHITE], fontSize: 6, cellPadding: 3 } },
+    ]],
+    body: tableBody,
+    columnStyles: {
+      0: { cellWidth: 75, halign: 'center', fontSize: 6.5, fontStyle: 'bold' },
+      1: { cellWidth: 'auto', fontSize: 7 },
+      2: { cellWidth: 42, halign: 'center', fontSize: 8, fontStyle: 'bold' },
+      3: { cellWidth: 42, halign: 'center', fontSize: 8, fontStyle: 'bold' },
+      4: { cellWidth: 42, halign: 'center', fontSize: 8, fontStyle: 'bold' },
+      5: { cellWidth: 42, halign: 'center', fontSize: 8, fontStyle: 'bold' },
+    },
+    styles: {
+      lineWidth: 0.2,
+      lineColor: [200, 200, 200],
+      cellPadding: 2.5,
+      overflow: 'linebreak',
+    },
+    theme: 'grid',
+    didParseCell: (data: any) => {
+      if (data.section === 'body' && data.column.index >= 2 && data.cell.raw === 'X') {
+        data.cell.styles.textColor = [...TERRA_GREEN];
+        data.cell.styles.fontStyle = 'bold';
+      }
+    },
+    didDrawPage: () => {
+      drawReportHeader(doc, margin);
+    },
+  });
+
+  curY = (doc as any).lastAutoTable?.finalY + 8 || curY + 100;
+
+  // OBS line
+  if (template.notes) {
+    if (curY > pageHeight - 40) {
+      doc.addPage();
+      drawReportHeader(doc, margin);
+      curY = 80;
+    }
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BLACK);
+    doc.text('OBS:', margin, curY);
+    doc.setFont('helvetica', 'normal');
+    const obsLines = doc.splitTextToSize(template.notes, pageWidth - margin * 2 - 30);
+    doc.text(obsLines, margin + 25, curY);
+    curY += obsLines.length * 9 + 5;
+  }
+
+  // Separator before OS section
+  doc.setDrawColor(...TERRA_GREEN);
+  doc.setLineWidth(0.5);
+  doc.line(margin, curY, pageWidth - margin, curY);
+  curY += 12;
+
+  return curY;
+}
 
 function drawReportHeader(doc: jsPDF, margin: number) {
   const pageWidth = doc.internal.pageSize.getWidth();

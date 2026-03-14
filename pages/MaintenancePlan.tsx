@@ -81,7 +81,9 @@ const MaintenancePlan: React.FC = () => {
   const [showValues, setShowValues] = useState(true);
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(true);
   const [selectedEquipIds, setSelectedEquipIds] = useState<Set<string>>(new Set()); // empty = all
+  const [planItemsMap, setPlanItemsMap] = useState<Record<string, MaintenancePlanItem[]>>({});
 
   // WhatsApp state
   const [whatsAppMessages, setWhatsAppMessages] = useState<WhatsAppMessage[]>([]);
@@ -226,13 +228,19 @@ const MaintenancePlan: React.FC = () => {
     }
     setReportLoading(true);
     try {
-      let data = await maintenancePlanService.getMaintenanceReport(reportDateFrom, reportDateTo);
+      // Load report data + plan items in parallel
+      const [data, itemsMap] = await Promise.all([
+        maintenancePlanService.getMaintenanceReport(reportDateFrom, reportDateTo),
+        maintenancePlanService.getAllPlanItems(),
+      ]);
+      setPlanItemsMap(itemsMap);
       // Filter by selected equipment if any
+      let filtered = data;
       if (selectedEquipIds.size > 0) {
-        data = data.filter(r => r.template.id && selectedEquipIds.has(r.template.id));
+        filtered = data.filter(r => r.template.id && selectedEquipIds.has(r.template.id));
       }
-      setReportData(data);
-      if (data.length === 0) {
+      setReportData(filtered);
+      if (filtered.length === 0) {
         toast('Nenhuma OS encontrada no período', { icon: '⚠️' });
       }
     } catch (err: any) {
@@ -323,8 +331,10 @@ const MaintenancePlan: React.FC = () => {
       showValues,
       showWhatsApp,
       showPhotos,
+      showChecklist,
       whatsappMessages: filteredWhatsGroups,
       whatsappPhotos: Object.keys(whatsAppPhotos).length > 0 ? whatsAppPhotos : undefined,
+      planItemsMap: Object.keys(planItemsMap).length > 0 ? planItemsMap : undefined,
     });
     toast.success('PDF do relatório gerado!');
   };
@@ -773,6 +783,16 @@ const MaintenancePlan: React.FC = () => {
                   className="accent-[#007a33] w-4 h-4"
                 />
                 <span className="text-xs text-slate-300">Incluir fotos</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showChecklist}
+                  onChange={e => setShowChecklist(e.target.checked)}
+                  className="accent-[#007a33] w-4 h-4"
+                />
+                <span className="text-xs text-slate-300">Checklist Plano</span>
               </label>
 
               <div className="h-5 w-px bg-slate-800" />
