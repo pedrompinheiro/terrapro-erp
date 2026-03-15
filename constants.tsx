@@ -41,7 +41,7 @@ export const NAV_ITEMS = [
   { id: 'bi', label: 'Relatórios BI', icon: <BarChart3 size={20} />, group: 'Gestão', path: '/bi', slug: 'sys_audit_logs' },
   { id: 'documents', label: 'Documentos GED', icon: <FileText size={20} />, group: 'Gestão', path: '/documents', slug: 'sys_audit_logs' },
   { id: 'security', label: 'Segurança & Audit', icon: <Shield size={20} />, group: 'Gestão', path: '/security', slug: 'sys_audit_logs' },
-  { id: 'whatsapp', label: 'Automação Zap', icon: <MessageSquare size={20} />, group: 'Inteligência', path: '/whatsapp', slug: 'sys_audit_logs' },
+  { id: 'whatsapp', label: 'Automação Zap', icon: <MessageSquare size={20} />, group: 'Inteligência', path: '/whatsapp', slug: 'whatsapp_automacao' },
 ];
 
 export const BOTTOM_NAV_ITEMS = [

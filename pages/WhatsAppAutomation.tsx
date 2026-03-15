@@ -24,9 +24,11 @@ interface WhatsAppMessage {
     ai_asset?: string;
     ai_urgency?: string;
     ai_action?: string;
+    ai_response?: string;
     status: 'PENDING' | 'PROCESSED' | 'IGNORED';
     group_id?: string;
     group_name?: string;
+    remote_jid?: string;
 }
 
 interface WhatsAppRule {
@@ -61,6 +63,10 @@ const WhatsAppAutomation: React.FC = () => {
     // Forms
     const [campaignForm, setCampaignForm] = useState({ name: '', target: 'ALL_CLIENTS', message: '' });
     const [ruleForm, setRuleForm] = useState({ name: '', trigger: '', action: '' });
+
+    // Respostas editáveis (id -> texto)
+    const [editableResponses, setEditableResponses] = useState<Record<string, string>>({});
+    const [sendingMessage, setSendingMessage] = useState<string | null>(null);
 
     // Helper para adicionar log
     const addLog = (message: string) => {
@@ -311,7 +317,71 @@ const WhatsAppAutomation: React.FC = () => {
     };
 
     // --- Approve / Ignore messages ---
-    const handleApproveMessage = async (id: string, action?: string) => {
+    const handleApproveAndReply = async (msg: WhatsAppMessage) => {
+        const responseText = editableResponses[msg.id] || msg.ai_response || '';
+        if (!responseText.trim()) {
+            alert('Digite uma resposta antes de enviar.');
+            return;
+        }
+        if (!msg.remote_jid) {
+            alert('Mensagem sem JID de destino. Não é possível responder.');
+            // Ainda assim marca como processada
+            await supabase.from('whatsapp_messages').update({ status: 'PROCESSED' }).eq('id', msg.id);
+            refetchMessages();
+            return;
+        }
+
+        setSendingMessage(msg.id);
+        try {
+            // Enviar via Edge Function (que usa Evolution API)
+            const { data, error } = await supabase.functions.invoke('whatsapp-send', {
+                body: {
+                    remoteJid: msg.remote_jid,
+                    text: `🤖 *TerraPro Bot:*\n${responseText}`,
+                }
+            });
+
+            if (error) {
+                // Fallback: tentar via Evolution API direto
+                const evoUrl = import.meta.env.VITE_EVOLUTION_API_URL || 'https://evolution.terramaquinas.com.br';
+                const { data: settings } = await supabase
+                    .from('system_settings')
+                    .select('value')
+                    .eq('key', 'evolution_api_key')
+                    .single();
+
+                const resp = await fetch(`${evoUrl}/message/sendText/terrapro_bot`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': settings?.value || 'terrapro123',
+                    },
+                    body: JSON.stringify({
+                        number: msg.remote_jid,
+                        text: `🤖 *TerraPro Bot:*\n${responseText}`,
+                    }),
+                });
+
+                if (!resp.ok) throw new Error('Falha ao enviar');
+            }
+
+            await supabase.from('whatsapp_messages').update({ status: 'PROCESSED' }).eq('id', msg.id);
+            // Limpar resposta editável
+            setEditableResponses(prev => {
+                const next = { ...prev };
+                delete next[msg.id];
+                return next;
+            });
+            refetchMessages();
+        } catch (err) {
+            console.error('Erro ao enviar resposta:', err);
+            alert('Erro ao enviar resposta no WhatsApp. Verifique a conexão.');
+        } finally {
+            setSendingMessage(null);
+        }
+    };
+
+    const handleApproveOnly = async (id: string) => {
         await supabase.from('whatsapp_messages').update({ status: 'PROCESSED' }).eq('id', id);
         refetchMessages();
     };
@@ -546,14 +616,64 @@ const WhatsAppAutomation: React.FC = () => {
                                                             </p>
                                                         </div>
                                                     </div>
-                                                    {msg.status === 'PENDING' && (
+                                                    {/* Resposta sugerida pela IA */}
+                                                    {msg.status === 'PENDING' && (msg.ai_response || msg.ai_intent !== 'GENERAL') && (
+                                                        <div className="mt-4 pt-4 border-t border-[#007a33]/20 space-y-3">
+                                                            <div>
+                                                                <p className="text-[10px] uppercase text-slate-500 font-bold mb-1">Resposta sugerida (editável)</p>
+                                                                <textarea
+                                                                    value={editableResponses[msg.id] ?? msg.ai_response ?? msg.ai_action ?? ''}
+                                                                    onChange={e => setEditableResponses(prev => ({ ...prev, [msg.id]: e.target.value }))}
+                                                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none focus:border-emerald-500 outline-none"
+                                                                    rows={2}
+                                                                    placeholder="Digite a resposta para enviar no WhatsApp..."
+                                                                />
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={() => handleApproveAndReply(msg)}
+                                                                    disabled={sendingMessage === msg.id}
+                                                                    className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                                                                >
+                                                                    <Send size={14} />
+                                                                    {sendingMessage === msg.id ? 'Enviando...' : 'Aprovar e Responder'}
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleApproveOnly(msg.id)}
+                                                                    className="px-4 bg-slate-800 text-emerald-400 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 transition-colors"
+                                                                    title="Aprovar sem responder no WhatsApp"
+                                                                >
+                                                                    Só Aprovar
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleIgnoreMessage(msg.id)}
+                                                                    className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors"
+                                                                >
+                                                                    Ignorar
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {msg.status === 'PENDING' && !msg.ai_response && msg.ai_intent === 'GENERAL' && (
                                                         <div className="flex gap-3 mt-4 pt-4 border-t border-[#007a33]/20">
-                                                            <button onClick={() => handleApproveMessage(msg.id, msg.ai_action)} className="flex-1 bg-[#007a33] text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-[#006028] transition-colors">
-                                                                Aprovar: {msg.ai_action || 'Processar'}
+                                                            <button onClick={() => handleApproveOnly(msg.id)} className="flex-1 bg-slate-700 text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-600 transition-colors">
+                                                                Marcar como Lida
                                                             </button>
                                                             <button onClick={() => handleIgnoreMessage(msg.id)} className="px-4 bg-slate-800 text-slate-400 py-2 rounded-lg text-xs font-bold uppercase hover:text-white hover:bg-slate-700 transition-colors">
                                                                 Ignorar
                                                             </button>
+                                                        </div>
+                                                    )}
+                                                    {msg.status === 'PROCESSED' && (
+                                                        <div className="mt-3 pt-3 border-t border-emerald-500/10">
+                                                            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest flex items-center gap-1">
+                                                                <CheckCircle2 size={12} /> Processada
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    {msg.status === 'IGNORED' && (
+                                                        <div className="mt-3 pt-3 border-t border-slate-700/30">
+                                                            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Ignorada</span>
                                                         </div>
                                                     )}
                                                 </div>

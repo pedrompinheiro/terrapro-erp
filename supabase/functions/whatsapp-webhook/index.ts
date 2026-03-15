@@ -2,8 +2,9 @@
  * TERRAPRO ERP - WhatsApp Webhook Edge Function
  *
  * Recebe webhooks da Evolution API (mensagens, grupos, status de conexao).
- * Grava mensagens no Supabase e analisa com IA (multi-provider) para detectar
+ * Grava mensagens no Supabase, analisa com IA (multi-provider) para detectar
  * intencao, urgencia, equipamento mencionado e acao sugerida.
+ * Responde automaticamente no WhatsApp e executa acoes no sistema.
  *
  * Deploy: supabase functions deploy whatsapp-webhook --no-verify-jwt
  */
@@ -27,6 +28,62 @@ function getSupabase() {
 }
 
 // ---------------------------------------------------------------------------
+// EVOLUTION API - Enviar mensagem de resposta no WhatsApp
+// ---------------------------------------------------------------------------
+async function getEvolutionConfig(supabase: any) {
+  const keys = ['evolution_api_url', 'evolution_api_key', 'evolution_instance_name']
+  const { data } = await supabase
+    .from('system_settings')
+    .select('key, value')
+    .in('key', keys)
+
+  const config: Record<string, string> = {}
+  for (const row of (data || [])) {
+    config[row.key] = row.value
+  }
+
+  return {
+    url: config.evolution_api_url || '',
+    apiKey: config.evolution_api_key || '',
+    instance: config.evolution_instance_name || '',
+  }
+}
+
+async function sendWhatsAppMessage(supabase: any, remoteJid: string, text: string) {
+  try {
+    const evo = await getEvolutionConfig(supabase)
+    if (!evo.url || !evo.instance) {
+      console.error('[sendWhatsApp] Evolution API nao configurada')
+      return false
+    }
+
+    const resp = await fetch(`${evo.url}/message/sendText/${evo.instance}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': evo.apiKey,
+      },
+      body: JSON.stringify({
+        number: remoteJid,
+        text: text,
+      }),
+    })
+
+    if (!resp.ok) {
+      const err = await resp.text()
+      console.error(`[sendWhatsApp] Erro ${resp.status}: ${err}`)
+      return false
+    }
+
+    console.log(`[sendWhatsApp] Mensagem enviada para ${remoteJid}`)
+    return true
+  } catch (err) {
+    console.error('[sendWhatsApp] Erro:', err)
+    return false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // AI ANALYSIS (multi-provider via aiHelper)
 // ---------------------------------------------------------------------------
 async function analyzeMessage(content: string, supabase: any) {
@@ -39,7 +96,8 @@ Analise a seguinte mensagem de WhatsApp e retorne APENAS um JSON valido (sem mar
   "intent": "MAINTENANCE_REQUEST|FUEL_REQUEST|PARTS_REQUEST|LOGISTICS|FINANCIAL|GENERAL",
   "asset": "nome ou codigo do equipamento mencionado, ou null se nenhum",
   "urgency": "LOW|MEDIUM|HIGH",
-  "action": "acao sugerida em portugues curto, ex: Abrir OS corretiva para escavadeira 04"
+  "action": "acao sugerida em portugues curto, ex: Abrir OS corretiva para escavadeira 04",
+  "response": "resposta curta e profissional para enviar no WhatsApp confirmando o recebimento e a acao que sera tomada. Use no maximo 2 frases. Se for GENERAL, responda normalmente."
 }
 
 Regras:
@@ -52,6 +110,8 @@ Regras:
 - Urgencia HIGH: palavras como urgente, parou, quebrou, vazando, emergencia
 - Urgencia MEDIUM: problemas que precisam atencao mas nao sao emergencia
 - Urgencia LOW: informacoes gerais, perguntas, saudacoes
+- Na resposta, seja breve e profissional. Confirme o recebimento e a acao.
+- Para GENERAL com urgencia LOW, NAO gere resposta (response = null)
 
 Mensagem: "${content.replace(/"/g, '\\"').substring(0, 500)}"
 
@@ -69,11 +129,122 @@ Retorne SOMENTE o JSON.`
       ai_intent: parsed.intent || 'GENERAL',
       ai_asset: parsed.asset || null,
       ai_urgency: parsed.urgency || 'LOW',
-      ai_action: parsed.action || null
+      ai_action: parsed.action || null,
+      ai_response: parsed.response || null,
     }
   } catch (err) {
     console.error('AI analysis failed:', err)
     return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// EXECUTE SYSTEM ACTION based on AI intent
+// ---------------------------------------------------------------------------
+async function executeAction(
+  aiResult: any,
+  messageId: string,
+  senderName: string,
+  content: string,
+  supabase: any
+) {
+  const { ai_intent, ai_asset, ai_urgency } = aiResult
+
+  try {
+    switch (ai_intent) {
+      case 'MAINTENANCE_REQUEST': {
+        // Buscar equipamento pelo codigo
+        let equipmentId = null
+        let equipmentName = ai_asset
+
+        if (ai_asset) {
+          const { data: equip } = await supabase
+            .from('equipment')
+            .select('id, asset_id, name')
+            .or(`asset_id.ilike.%${ai_asset}%,name.ilike.%${ai_asset}%`)
+            .limit(1)
+            .single()
+
+          if (equip) {
+            equipmentId = equip.id
+            equipmentName = `${equip.asset_id} - ${equip.name}`
+          }
+        }
+
+        // Criar OS corretiva
+        const { data: os, error: osError } = await supabase
+          .from('service_orders')
+          .insert({
+            equipment_id: equipmentId,
+            type: 'CORRETIVA',
+            priority: ai_urgency === 'HIGH' ? 'URGENTE' : ai_urgency === 'MEDIUM' ? 'ALTA' : 'NORMAL',
+            status: 'ABERTA',
+            description: `[WhatsApp - ${senderName}] ${content.substring(0, 500)}`,
+            requested_by: senderName,
+            source: 'WHATSAPP',
+            whatsapp_message_id: messageId,
+          })
+          .select('id, order_number')
+          .single()
+
+        if (osError) {
+          console.error('[executeAction] Erro ao criar OS:', osError)
+          // Tentar formato alternativo da tabela
+          const { data: os2 } = await supabase
+            .from('maintenance_orders')
+            .insert({
+              equipment_id: equipmentId,
+              type: 'corretiva',
+              priority: ai_urgency === 'HIGH' ? 'urgente' : ai_urgency === 'MEDIUM' ? 'alta' : 'normal',
+              status: 'aberta',
+              description: `[WhatsApp - ${senderName}] ${content.substring(0, 500)}`,
+              requested_by: senderName,
+              source: 'whatsapp',
+            })
+            .select('id')
+            .single()
+
+          if (os2) {
+            console.log(`[executeAction] OS criada (maintenance_orders): ${os2.id}`)
+          }
+        } else {
+          console.log(`[executeAction] OS criada: ${os?.order_number || os?.id}`)
+        }
+
+        // Atualizar status da mensagem
+        await supabase
+          .from('whatsapp_messages')
+          .update({ status: 'PROCESSED', ai_action: `OS corretiva criada para ${equipmentName || 'equipamento'}` })
+          .eq('id', messageId)
+        break
+      }
+
+      case 'FUEL_REQUEST': {
+        // Registrar solicitacao de abastecimento
+        console.log(`[executeAction] Solicitacao de combustivel de ${senderName}: ${ai_asset}`)
+        await supabase
+          .from('whatsapp_messages')
+          .update({ status: 'PROCESSED' })
+          .eq('id', messageId)
+        break
+      }
+
+      case 'PARTS_REQUEST': {
+        // Registrar solicitacao de pecas
+        console.log(`[executeAction] Solicitacao de pecas de ${senderName}: ${content.substring(0, 100)}`)
+        await supabase
+          .from('whatsapp_messages')
+          .update({ status: 'PROCESSED' })
+          .eq('id', messageId)
+        break
+      }
+
+      default:
+        // GENERAL, LOGISTICS, FINANCIAL - apenas marcar como analisado
+        break
+    }
+  } catch (err) {
+    console.error('[executeAction] Erro:', err)
   }
 }
 
@@ -93,6 +264,19 @@ function extractMessageText(message: any): string | null {
   if (message.contactMessage) return `[Contato: ${message.contactMessage.displayName || ''}]`
   if (message.locationMessage) return `[Localizacao: ${message.locationMessage.degreesLatitude},${message.locationMessage.degreesLongitude}]`
   return null
+}
+
+// ---------------------------------------------------------------------------
+// CHECK AUTO-REPLY SETTINGS
+// ---------------------------------------------------------------------------
+async function isAutoReplyEnabled(supabase: any): Promise<boolean> {
+  const { data } = await supabase
+    .from('system_settings')
+    .select('value')
+    .eq('key', 'whatsapp_auto_reply')
+    .single()
+
+  return data?.value === 'true' || data?.value === true
 }
 
 // ---------------------------------------------------------------------------
@@ -163,10 +347,38 @@ async function handleMessage(payload: any, supabase: any) {
   if (msgData?.id && messageType === 'text') {
     const aiResult = await analyzeMessage(content, supabase)
     if (aiResult) {
+      // Atualizar mensagem com resultado da IA
       await supabase
         .from('whatsapp_messages')
-        .update(aiResult)
+        .update({
+          ai_intent: aiResult.ai_intent,
+          ai_asset: aiResult.ai_asset,
+          ai_urgency: aiResult.ai_urgency,
+          ai_action: aiResult.ai_action,
+        })
         .eq('id', msgData.id)
+
+      // Salvar resposta sugerida pela IA
+      if (aiResult.ai_response) {
+        await supabase
+          .from('whatsapp_messages')
+          .update({ ai_response: aiResult.ai_response })
+          .eq('id', msgData.id)
+      }
+
+      // Verificar se auto-reply esta ativo
+      const autoReply = await isAutoReplyEnabled(supabase)
+
+      if (autoReply && aiResult.ai_response && aiResult.ai_intent !== 'GENERAL') {
+        // Modo automatico: responde e executa acao direto
+        const prefix = '🤖 *TerraPro Bot:*\n'
+        await sendWhatsAppMessage(supabase, remoteJid, prefix + aiResult.ai_response)
+
+        if (aiResult.ai_intent !== 'GENERAL') {
+          await executeAction(aiResult, msgData.id, senderName, content, supabase)
+        }
+      }
+      // Modo manual: nao faz nada, usuario aprova pelo painel
     }
   }
 }
