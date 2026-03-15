@@ -5,6 +5,37 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [v4.4.0] - 2026-03-12
+
+### Adicionado
+- **Módulo Plano de Manutenção**: controle preventivo por equipamento com relatórios para Bunge
+  - Seed dos 16 equipamentos da planilha Excel (dados reais: Volvo, CAT, SDLG, John Deere, Valtra, Ford, VW)
+  - Geração de checklist PDF (formato planilha, landscape A4) por equipamento
+  - Relatório por período com cruzamento de OS (service_orders + maintenance_os)
+  - Matching inteligente OS↔Equipamento via plate, fleet_number, brand+model, serial
+  - Toggles: incluir/excluir valores (R$), mensagens WhatsApp, fotos
+  - Importação de chat WhatsApp (.txt e .zip) com extração de fotos
+  - Parser WhatsApp com keywords de equipamento e filtro de manutenção
+  - Seletor de equipamentos no relatório (filtro por frota)
+  - Fotos do WhatsApp embeddadas no PDF do relatório
+- **Faturamento Bunge completo**: billing multi-cliente com HE, Mensalidade, Locação e PDF
+  - Novo Cliente + FaturarModal com anexos
+  - Hora Extra: cálculo automático a partir de batidas de ponto
+  - Locação: edição inline tipo (DIÁRIA ↔ MENSAL), nomes, valores + cadastro novos equipamentos
+  - Mensalidade: valores fixos mensais
+  - Dashboard Bunge com resumo e histórico
+  - Exportação PDF profissional com logo Terra
+- Relatório de Rentabilidade por Equipamento com vinculação asset_id
+- Recuperação do sistema completo de OS: Nova OS + ServiceOrderFormModal
+
+### Corrigido
+- Fix matching OS: campos reais (order_number, technician_name, total_value, model_name, plate)
+- Fix PDF: emojis substituídos por texto plain, sobreposição de texto no resumo
+- Fix seed equipamentos: dados corretos da planilha Excel (não mais inventados)
+- Merge com main: recuperação de 30 commits perdidos (Folha, Financeiro, RH, Busca, Chatbot IA)
+
+---
+
 ## [v4.3.0] - 2026-03-09
 
 ### Adicionado

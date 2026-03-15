@@ -3,12 +3,11 @@
  *
  * Recebe XML, PDF ou imagem de NF e extrai dados estruturados.
  * - XML: parsing direto via fast-xml-parser
- * - PDF/Imagem: envia para IA (multi-provider) para extracao inteligente
+ * - PDF/Imagem: envia para Gemini AI para extração inteligente
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { parse as parseXml } from 'https://esm.sh/fast-xml-parser@4.3.4'
-import { analyzeText, analyzeWithImage } from '../_shared/aiHelper.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -80,8 +79,9 @@ function parseNFeXml(xmlText: string): ParsedNfe {
   }
 }
 
-const NF_PROMPT = `Voce e um assistente que extrai dados de Notas Fiscais brasileiras.
-Analise o conteudo abaixo e retorne APENAS um JSON com a seguinte estrutura:
+async function parseWithGemini(content: string, fileType: string, geminiKey: string): Promise<ParsedNfe> {
+  const prompt = `Voce e um assistente que extrai dados de Notas Fiscais brasileiras.
+Analise o conteudo abaixo (${fileType === 'pdf' ? 'texto de PDF' : 'imagem'} de uma DANFE/NF) e retorne APENAS um JSON com a seguinte estrutura:
 {
   "supplier_name": "nome do fornecedor/emitente",
   "supplier_cnpj": "CNPJ",
@@ -94,20 +94,37 @@ Analise o conteudo abaixo e retorne APENAS um JSON com a seguinte estrutura:
 }
 Retorne SOMENTE o JSON, sem markdown ou explicacao.`
 
-async function parseWithAI(content: string, fileType: string, supabase: any): Promise<ParsedNfe> {
-  let text: string | null = null
-
-  if (fileType === 'image') {
-    text = await analyzeWithImage(supabase, NF_PROMPT, content, 'image/jpeg')
-  } else {
-    // PDF - envia como texto
-    text = await analyzeText(supabase, `${NF_PROMPT}\n\nConteudo do documento:\n${content}`)
+  const body: any = {
+    contents: [{
+      parts: [
+        { text: prompt },
+      ]
+    }]
   }
 
-  if (!text) throw new Error('IA nao retornou resposta. Verifique a configuracao do provider em Configuracoes.')
+  if (fileType === 'image') {
+    body.contents[0].parts.push({
+      inline_data: { mime_type: 'image/jpeg', data: content }
+    })
+  } else {
+    body.contents[0].parts.push({ text: `\n\nConteudo do documento:\n${content}` })
+  }
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  )
+
+  if (!resp.ok) {
+    const err = await resp.text()
+    throw new Error(`Gemini API error: ${resp.status} - ${err}`)
+  }
+
+  const result = await resp.json()
+  const text = result.candidates?.[0]?.content?.parts?.[0]?.text || ''
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('IA nao retornou JSON valido')
+  if (!jsonMatch) throw new Error('Gemini nao retornou JSON valido')
 
   return JSON.parse(jsonMatch[0])
 }
@@ -134,12 +151,27 @@ Deno.serve(async (req) => {
       parsed = parseNFeXml(content)
       confidence = 95
     } else {
+      // PDF ou imagem: usar Gemini
       const supabase = createClient(
         Deno.env.get('SUPABASE_URL') || '',
         Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
       )
 
-      parsed = await parseWithAI(content, type === 'pdf' ? 'pdf' : 'image', supabase)
+      const { data: settings } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'gemini_api_key')
+        .single()
+
+      const geminiKey = settings?.value
+      if (!geminiKey) {
+        return new Response(
+          JSON.stringify({ error: 'Chave Gemini nao configurada em system_settings' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      parsed = await parseWithGemini(content, type === 'pdf' ? 'pdf' : 'image', geminiKey)
       confidence = type === 'pdf' ? 75 : 60
     }
 

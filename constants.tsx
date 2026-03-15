@@ -19,8 +19,7 @@ import {
   Shield,
   Database,
   Calculator,
-  Camera,
-  DollarSign
+  Camera
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -31,19 +30,18 @@ export const NAV_ITEMS = [
   { id: 'map', label: 'Mapa Digital', icon: <MapIcon size={20} />, group: 'Operacional', path: '/map', slug: 'diaria_operadores' },
   { id: 'daily', label: 'Controle Diário', icon: <ClipboardCheck size={20} />, group: 'Operacional', path: '/daily', slug: 'diaria_operadores' },
   { id: 'maintenance', label: 'Manutenção', icon: <Wrench size={20} />, group: 'Operacional', path: '/maintenance', slug: 'frota_manutencao' },
+  { id: 'maintenance-plan', label: 'Plano Manutenção', icon: <ClipboardCheck size={20} />, group: 'Operacional', path: '/maintenance-plan', slug: 'frota_manutencao' },
   { id: 'inventory', label: 'Almoxarifado', icon: <Package size={20} />, group: 'Insumos', path: '/inventory', slug: 'frota_manutencao' },
   { id: 'fuel', label: 'Combustível', icon: <Fuel size={20} />, group: 'Insumos', path: '/fuel', slug: 'controle_diesel' },
   { id: 'hr', label: 'Recursos Humanos', icon: <Users size={20} />, group: 'Gestão', path: '/rh', slug: 'rh_folha_ponto' },
   { id: 'ponto', label: 'Cálculo de Ponto', icon: <Calculator size={20} />, group: 'Gestão', path: '/ponto/calculos', slug: 'rh_folha_ponto' },
   { id: 'ocr', label: 'Importação OCR Ponto', icon: <Camera size={20} />, group: 'Gestão', path: '/ponto/ocr', slug: 'rh_folha_ponto' },
-  { id: 'integracoes', label: 'Integrações', icon: <ClipboardCheck size={20} />, group: 'Gestão', path: '/integracoes', slug: 'rh_folha_ponto' },
-  { id: 'folha', label: 'Folha de Pagamento', icon: <DollarSign size={20} />, group: 'Gestão', path: '/folha', slug: 'rh_folha_ponto' },
   { id: 'financial', label: 'Financeiro', icon: <Wallet size={20} />, group: 'Gestão', path: '/financial', slug: 'fin_contas_pagar' },
   { id: 'billing', label: 'Faturamento', icon: <FileText size={20} />, group: 'Gestão', path: '/billing', slug: 'fin_contas_receber' },
   { id: 'bi', label: 'Relatórios BI', icon: <BarChart3 size={20} />, group: 'Gestão', path: '/bi', slug: 'sys_audit_logs' },
   { id: 'documents', label: 'Documentos GED', icon: <FileText size={20} />, group: 'Gestão', path: '/documents', slug: 'sys_audit_logs' },
   { id: 'security', label: 'Segurança & Audit', icon: <Shield size={20} />, group: 'Gestão', path: '/security', slug: 'sys_audit_logs' },
-  { id: 'whatsapp', label: 'Automação Zap', icon: <MessageSquare size={20} />, group: 'Inteligência', path: '/whatsapp', slug: 'sys_audit_logs' },
+  { id: 'whatsapp', label: 'Automação Zap', icon: <MessageSquare size={20} />, group: 'Inteligência', path: '/whatsapp', slug: 'whatsapp_automacao' },
 ];
 
 export const BOTTOM_NAV_ITEMS = [

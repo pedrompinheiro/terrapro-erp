@@ -22,6 +22,7 @@
     "dotenv": "^17.3.1",
     "jspdf": "^4.1.0",
     "jspdf-autotable": "^5.0.7",
+    "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.563.0",
     "mdb-reader": "^3.1.0",

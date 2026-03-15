@@ -55,6 +55,7 @@ INSERT INTO system_modules (slug, name, category, is_sensitive, is_active) VALUE
 ('frota_manutencao', 'Manutenção Preventiva e Corretiva', 'Operacional', false, true),
 ('controle_diesel', 'Abastecimento e Consumo', 'Operacional', true, true), -- Já em uso
 ('diaria_operadores', 'Controle de Diárias e Horímetros', 'Operacional', false, true),
+('whatsapp_automacao', 'Automação WhatsApp', 'Operacional', true, true),
 -- Medição
 ('medicao_brf_bunge', 'Medições de Contratos (BRF/Bunge)', 'Medição', true, true),
 -- Logística
